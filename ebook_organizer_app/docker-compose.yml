@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ebook_organizer_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./backend/ebook_organizer.db:/app/ebook_organizer.db
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=sqlite:///./ebook_organizer.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Note: Flutter desktop apps typically don't run in containers
+  # This is a build service only
+  flutter-builder:
+    image: ghcr.io/cirruslabs/flutter:stable
+    container_name: ebook_organizer_flutter_builder
+    working_dir: /app
+    volumes:
+      - ./ebook_organizer_gui:/app
+      - flutter-pub-cache:/root/.pub-cache
+    command: |
+      sh -c "
+        flutter pub get &&
+        flutter build linux --release
+      "
+    profiles:
+      - build
+
+volumes:
+  flutter-pub-cache:
+
+networks:
+  default:
+    name: ebook_organizer_network
