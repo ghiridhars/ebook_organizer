@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/local_ebook.dart';
 import '../services/local_library_service.dart';
+import '../utils/platform_utils.dart';
 
 /// Provider for managing local ebook library state
 class LocalLibraryProvider with ChangeNotifier {
@@ -12,6 +12,7 @@ class LocalLibraryProvider with ChangeNotifier {
   LocalLibraryStats? _stats;
   bool _isLoading = false;
   bool _isScanning = false;
+  bool _isUploading = false;
   String? _error;
   String? _libraryPath;
   int _scanProgress = 0;
@@ -30,11 +31,15 @@ class LocalLibraryProvider with ChangeNotifier {
   LocalLibraryStats? get stats => _stats;
   bool get isLoading => _isLoading;
   bool get isScanning => _isScanning;
+  bool get isUploading => _isUploading;
   String? get error => _error;
   String? get libraryPath => _libraryPath;
   int get scanProgress => _scanProgress;
   int get scanFound => _scanFound;
   bool get hasLibraryPath => _libraryPath != null && _libraryPath!.isNotEmpty;
+
+  /// Returns true if file upload is supported (always true, works on all platforms)
+  bool get supportsFileUpload => _service.supportsFileUpload;
 
   String? get selectedCategory => _selectedCategory;
   String? get selectedFormat => _selectedFormat;
@@ -99,6 +104,13 @@ class LocalLibraryProvider with ChangeNotifier {
 
   /// Choose library folder
   Future<bool> chooseLibraryFolder() async {
+    // Directory selection is not meaningful on web
+    if (kIsWeb || !supportsScanDirectory) {
+      _error = 'Directory selection is not supported on web. Please upload files individually.';
+      notifyListeners();
+      return false;
+    }
+    
     try {
       final result = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Select your ebook library folder',
@@ -106,7 +118,7 @@ class LocalLibraryProvider with ChangeNotifier {
 
       if (result != null) {
         // Verify directory exists
-        if (!Directory(result).existsSync()) {
+        if (!await directoryExists(result)) {
           _error = 'Selected directory does not exist';
           notifyListeners();
           return false;
@@ -185,6 +197,50 @@ class LocalLibraryProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Upload ebook files (works on all platforms including web)
+  Future<int> uploadFiles() async {
+    _isUploading = true;
+    _error = null;
+    notifyListeners();
+
+    int successCount = 0;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['epub', 'mobi', 'pdf', 'azw', 'azw3', 'fb2', 'djvu', 'cbz', 'cbr'],
+        withData: true, // Important: get file bytes for web
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        for (final file in result.files) {
+          if (file.bytes != null && file.name.isNotEmpty) {
+            final ebook = await _service.addEbookFromBytes(
+              fileName: file.name,
+              bytes: file.bytes!,
+              fileSize: file.size,
+              modifiedDate: DateTime.now(),
+            );
+            if (ebook != null) {
+              successCount++;
+            }
+          }
+        }
+
+        // Reload data after upload
+        await loadStats();
+        await loadEbooks();
+      }
+    } catch (e) {
+      _error = 'Failed to upload files: $e';
+    }
+
+    _isUploading = false;
+    notifyListeners();
+    return successCount;
+  }
+
   /// Update ebook metadata
   Future<void> updateEbook(LocalEbook ebook) async {
     try {
@@ -210,22 +266,21 @@ class LocalLibraryProvider with ChangeNotifier {
 
   /// Open ebook file with system default application
   Future<void> openEbook(LocalEbook ebook) async {
+    // File operations are not supported on web
+    if (kIsWeb || !supportsFileOperations) {
+      _error = 'Opening local files is not supported in web browsers';
+      notifyListeners();
+      return;
+    }
+    
     try {
-      final file = File(ebook.filePath);
-      if (!await file.exists()) {
+      if (!await fileExists(ebook.filePath)) {
         _error = 'File no longer exists: ${ebook.filePath}';
         notifyListeners();
         return;
       }
 
-      // Use platform-specific way to open file
-      if (Platform.isWindows) {
-        await Process.run('cmd', ['/c', 'start', '', ebook.filePath]);
-      } else if (Platform.isLinux) {
-        await Process.run('xdg-open', [ebook.filePath]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', [ebook.filePath]);
-      }
+      await openFile(ebook.filePath);
     } catch (e) {
       _error = 'Failed to open file: $e';
       notifyListeners();
@@ -234,17 +289,15 @@ class LocalLibraryProvider with ChangeNotifier {
 
   /// Open containing folder
   Future<void> openContainingFolder(LocalEbook ebook) async {
+    // File operations are not supported on web
+    if (kIsWeb || !supportsFileOperations) {
+      _error = 'Opening folders is not supported in web browsers';
+      notifyListeners();
+      return;
+    }
+    
     try {
-      final file = File(ebook.filePath);
-      final directory = file.parent.path;
-
-      if (Platform.isWindows) {
-        await Process.run('explorer', ['/select,', ebook.filePath]);
-      } else if (Platform.isLinux) {
-        await Process.run('xdg-open', [directory]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', ['-R', ebook.filePath]);
-      }
+      await openContainingFolderPath(ebook.filePath);
     } catch (e) {
       _error = 'Failed to open folder: $e';
       notifyListeners();

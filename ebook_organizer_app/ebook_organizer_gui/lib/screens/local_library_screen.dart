@@ -1,9 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/local_library_provider.dart';
 import '../models/local_ebook.dart';
 import '../widgets/local_library_widget.dart';
-import 'local_ebook_detail_screen.dart';
 
 /// Full-screen view for browsing local ebooks
 class LocalLibraryView extends StatefulWidget {
@@ -26,8 +26,13 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
   Widget build(BuildContext context) {
     return Consumer<LocalLibraryProvider>(
       builder: (context, provider, _) {
-        // Show setup screen if no library path
-        if (!provider.hasLibraryPath) {
+        // On web, show a different UI since directory scanning isn't supported
+        if (kIsWeb && !provider.hasLibraryPath && provider.filteredEbooks.isEmpty) {
+          return _WebSetupScreen(provider: provider);
+        }
+        
+        // Show setup screen if no library path (desktop only)
+        if (!kIsWeb && !provider.hasLibraryPath) {
           return _SetupScreen(provider: provider);
         }
 
@@ -51,6 +56,84 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
   }
 }
 
+/// Web-specific setup screen
+class _WebSetupScreen extends StatelessWidget {
+  final LocalLibraryProvider provider;
+
+  const _WebSetupScreen({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_upload,
+                size: 64,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Web Browser Mode',
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Upload your ebook files to manage them in the browser.\n'
+              'Note: Data is stored in memory and will be lost on page refresh.\n'
+              'For persistent local library, use the desktop app.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            if (provider.isUploading)
+              const CircularProgressIndicator()
+            else
+              FilledButton.icon(
+                onPressed: () async {
+                  final count = await provider.uploadFiles();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(count > 0 
+                          ? 'Successfully added $count ebook(s)!'
+                          : 'No files were added'),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Upload Ebook Files'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                ),
+              ),
+            const SizedBox(height: 16),
+            Text(
+              'Supported formats: EPUB, MOBI, PDF, AZW, AZW3, FB2, DJVU, CBZ, CBR',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SetupScreen extends StatelessWidget {
   final LocalLibraryProvider provider;
 
@@ -59,10 +142,11 @@ class _SetupScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               padding: const EdgeInsets.all(24),

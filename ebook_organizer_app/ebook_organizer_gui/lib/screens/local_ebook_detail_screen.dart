@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +6,7 @@ import '../models/local_ebook.dart';
 import '../providers/local_library_provider.dart';
 import '../services/epub_metadata_service.dart';
 import '../services/backend_metadata_service.dart';
+import '../utils/platform_utils.dart' as platform;
 
 /// Detail screen for viewing and editing local ebook information
 class LocalEbookDetailScreen extends StatefulWidget {
@@ -391,14 +393,26 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
             _buildInfoRow('Size', _ebook.fileSizeFormatted),
             _buildInfoRow('Modified', _formatDate(_ebook.modifiedDate)),
             _buildInfoRow('Indexed', _formatDate(_ebook.indexedAt)),
-            _buildInfoRow(
-              'File Exists',
-              _ebook.fileExists ? 'Yes' : 'No (file may have been moved or deleted)',
-              valueColor: _ebook.fileExists ? Colors.green : Colors.red,
-            ),
+            if (!kIsWeb) _buildFileExistsRow(),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildFileExistsRow() {
+    return FutureBuilder<bool>(
+      future: platform.fileExists(_ebook.filePath),
+      builder: (context, snapshot) {
+        final exists = snapshot.data ?? false;
+        final loading = snapshot.connectionState == ConnectionState.waiting;
+        
+        return _buildInfoRow(
+          'File Exists',
+          loading ? 'Checking...' : (exists ? 'Yes' : 'No (file may have been moved or deleted)'),
+          valueColor: loading ? Colors.grey : (exists ? Colors.green : Colors.red),
+        );
+      },
     );
   }
 
@@ -509,7 +523,8 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
     final format = _ebook.fileFormat.toLowerCase();
     bool fileUpdated = false;
     
-    if (EpubMetadataService.isEpub(_ebook.filePath)) {
+    // File writing is not supported on web
+    if (!kIsWeb && EpubMetadataService.isEpub(_ebook.filePath)) {
       // EPUB: Use native Dart implementation
       final shouldUpdateFile = await _showUpdateFileDialog(format: 'EPUB');
       if (shouldUpdateFile == true) {
@@ -535,7 +550,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
           scaffoldMessenger.hideCurrentSnackBar();
         }
       }
-    } else if (format == 'pdf') {
+    } else if (!kIsWeb && format == 'pdf') {
       // PDF: Use Python backend
       final backendAvailable = await backendMetadataService.isBackendAvailable();
       
@@ -595,7 +610,10 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
       final format = _ebook.fileFormat.toLowerCase();
       String message;
       
-      if (EpubMetadataService.isEpub(_ebook.filePath) || format == 'pdf') {
+      // On web, we can only update the index
+      if (kIsWeb) {
+        message = 'Metadata updated in index';
+      } else if (EpubMetadataService.isEpub(_ebook.filePath) || format == 'pdf') {
         if (fileUpdated) {
           message = 'Metadata updated in index and ${format.toUpperCase()} file';
         } else {

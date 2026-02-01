@@ -1,7 +1,12 @@
 """Configuration management for Ebook Organizer Backend"""
 
+import secrets
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from pathlib import Path
+
+# Generate a default secret key for development (will be overridden by env var in production)
+_DEFAULT_SECRET_KEY = secrets.token_urlsafe(32)
 
 class Settings(BaseSettings):
     """Application settings"""
@@ -21,10 +26,17 @@ class Settings(BaseSettings):
     ONEDRIVE_CLIENT_SECRET: str = ""
     ONEDRIVE_TOKEN_FILE: str = "token_onedrive.json"
     
-    # Security
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # Security - Use environment variable in production!
+    SECRET_KEY: str = _DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    @field_validator('SECRET_KEY')
+    @classmethod
+    def validate_secret_key(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError('SECRET_KEY must be at least 32 characters long')
+        return v
     
     # File Processing
     MAX_FILE_SIZE_MB: int = 100

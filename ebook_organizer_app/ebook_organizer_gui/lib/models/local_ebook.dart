@@ -1,4 +1,6 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'ebook_file_data.dart';
+import '../services/epub_metadata_service.dart';
 
 /// Model for locally stored ebook files
 class LocalEbook {
@@ -32,11 +34,10 @@ class LocalEbook {
     this.tags = const [],
   });
 
-  /// Create from file system
-  factory LocalEbook.fromFile(File file) {
-    final stat = file.statSync();
-    final fileName = file.uri.pathSegments.last;
-    final extension = fileName.split('.').last.toLowerCase();
+  /// Create from file data (works on all platforms including web)
+  factory LocalEbook.fromFileData(EbookFileData fileData) {
+    final fileName = fileData.fileName;
+    final extension = fileData.extension;
     
     // Extract title from filename (remove extension)
     String baseName = fileName;
@@ -52,12 +53,9 @@ class LocalEbook {
     if (baseName.contains(' - ')) {
       final parts = baseName.split(' - ');
       if (parts.length == 2) {
-        // Heuristic: if first part looks like a name (shorter, capitalized words)
-        // treat it as author, otherwise treat second part as author
         final first = parts[0].trim();
         final second = parts[1].trim();
         
-        // Check if first part looks like an author name (usually shorter)
         if (first.length < second.length && _looksLikeName(first)) {
           author = first;
           title = second;
@@ -65,7 +63,6 @@ class LocalEbook {
           title = first;
           author = second;
         } else {
-          // Default: assume "Author - Title" format
           author = first;
           title = second;
         }
@@ -120,75 +117,70 @@ class LocalEbook {
     }
 
     return LocalEbook(
-      filePath: file.path,
+      filePath: fileData.filePath,
       fileName: fileName,
       title: title,
       author: author,
       fileFormat: extension,
-      fileSize: stat.size,
-      modifiedDate: stat.modified,
+      fileSize: fileData.fileSize,
+      modifiedDate: fileData.modifiedDate,
       indexedAt: DateTime.now(),
     );
   }
 
-  /// Create from file with EPUB metadata reading (async version)
-  static Future<LocalEbook> fromFileWithMetadata(File file) async {
-    // First create basic ebook from filename
-    final ebook = LocalEbook.fromFile(file);
+  /// Create from dart:io File (native platforms only)
+  /// On web, use fromFileData with file picker result instead
+  factory LocalEbook.fromFile(dynamic file) {
+    final stat = file.statSync();
+    final String path = file.path;
+    final fileName = path.split(RegExp(r'[/\\]')).last;
     
-    // If it's an EPUB, try to read embedded metadata
-    if (ebook.fileFormat.toLowerCase() == 'epub') {
+    return LocalEbook.fromFileData(EbookFileData(
+      fileName: fileName,
+      filePath: path,
+      fileSize: stat.size,
+      modifiedDate: stat.modified,
+    ));
+  }
+
+  /// Create from file with EPUB metadata reading (async version)
+  /// Works on native platforms; on web, metadata reading may be limited
+  static Future<LocalEbook> fromFileDataWithMetadata(
+    EbookFileData fileData, {
+    Future<EpubMetadata?> Function(String path)? metadataReader,
+  }) async {
+    final ebook = LocalEbook.fromFileData(fileData);
+    
+    if (ebook.fileFormat.toLowerCase() == 'epub' && metadataReader != null) {
       try {
-        // Dynamically import to avoid circular dependency
-        final epubService = await _getEpubService();
-        if (epubService != null) {
-          final metadata = await epubService.readMetadata(file.path);
-          if (metadata != null) {
-            return LocalEbook(
-              filePath: ebook.filePath,
-              fileName: ebook.fileName,
-              title: metadata.title?.isNotEmpty == true ? metadata.title! : ebook.title,
-              author: metadata.creator?.isNotEmpty == true ? metadata.creator : ebook.author,
-              fileFormat: ebook.fileFormat,
-              fileSize: ebook.fileSize,
-              modifiedDate: ebook.modifiedDate,
-              indexedAt: ebook.indexedAt,
-              description: metadata.description,
-              tags: metadata.subjects,
-            );
-          }
+        final metadata = await metadataReader(fileData.filePath);
+        if (metadata != null) {
+          return LocalEbook(
+            filePath: ebook.filePath,
+            fileName: ebook.fileName,
+            title: metadata.title?.isNotEmpty == true ? metadata.title! : ebook.title,
+            author: metadata.creator?.isNotEmpty == true ? metadata.creator : ebook.author,
+            fileFormat: ebook.fileFormat,
+            fileSize: ebook.fileSize,
+            modifiedDate: ebook.modifiedDate,
+            indexedAt: ebook.indexedAt,
+            description: metadata.description,
+            tags: metadata.subjects,
+          );
         }
       } catch (e) {
-        // Fall back to filename-based extraction
-        print('Failed to read EPUB metadata: $e');
+        debugPrint('Failed to read EPUB metadata: $e');
       }
     }
     
     return ebook;
   }
-
-  /// Get EPUB service instance (lazy loaded to avoid import issues)
-  static dynamic _epubServiceInstance;
-  static Future<dynamic> _getEpubService() async {
-    if (_epubServiceInstance == null) {
-      try {
-        // Import dynamically to avoid circular dependencies
-        final service = await Future.value(_EpubServiceLoader.instance);
-        _epubServiceInstance = service;
-      } catch (e) {
-        return null;
-      }
-    }
-    return _epubServiceInstance;
-  }
   
   /// Helper to check if a string looks like a person's name
   static bool _looksLikeName(String s) {
     if (s.isEmpty || s.length > 50) return false;
-    // Names typically have 1-4 words, each starting with uppercase
     final words = s.split(' ').where((w) => w.isNotEmpty).toList();
     if (words.isEmpty || words.length > 5) return false;
-    // Check if most words start with uppercase
     int capitalizedCount = 0;
     for (final word in words) {
       if (word[0] == word[0].toUpperCase()) capitalizedCount++;
@@ -200,12 +192,12 @@ class LocalEbook {
   factory LocalEbook.fromMap(Map<String, dynamic> map) {
     return LocalEbook(
       id: map['id'],
-      filePath: map['file_path'],
-      fileName: map['file_name'],
-      title: map['title'],
+      filePath: map['file_path'] ?? '',
+      fileName: map['file_name'] ?? '',
+      title: map['title'] ?? 'Unknown',
       author: map['author'],
-      fileFormat: map['file_format'],
-      fileSize: map['file_size'],
+      fileFormat: map['file_format'] ?? '',
+      fileSize: map['file_size'] ?? 0,
       modifiedDate: DateTime.parse(map['modified_date']),
       indexedAt: DateTime.parse(map['indexed_at']),
       coverPath: map['cover_path'],
@@ -285,8 +277,8 @@ class LocalEbook {
   /// Get display category
   String get displayCategory => category?.isNotEmpty == true ? category! : 'Uncategorized';
 
-  /// Check if file still exists
-  bool get fileExists => File(filePath).existsSync();
+  /// Check if file path is valid (not a web blob URL)
+  bool get hasLocalPath => filePath.isNotEmpty && !filePath.startsWith('blob:');
 
   /// Supported ebook formats
   static const List<String> supportedFormats = [
@@ -299,27 +291,8 @@ class LocalEbook {
   }
 }
 
-/// Helper class to load EPUB service without circular import
-class _EpubServiceLoader {
-  static final instance = _EpubServiceLoader._();
-  _EpubServiceLoader._();
-  
-  dynamic _service;
-  
-  Future<dynamic> readMetadata(String path) async {
-    _service ??= await _loadService();
-    if (_service != null) {
-      return await _service.readMetadata(path);
-    }
-    return null;
-  }
-  
-  Future<dynamic> _loadService() async {
-    try {
-      // This will be resolved by the actual service
-      return null; // Placeholder - actual implementation will use direct import
-    } catch (e) {
-      return null;
-    }
-  }
-}
+// Note: EpubMetadata, LocalLibraryStats, and ScanResult are defined in the service files
+// to maintain backward compatibility with existing code.
+// - EpubMetadata: see epub_metadata_service.dart
+// - LocalLibraryStats: see local_library_service_interface.dart  
+// - ScanResult: see local_library_service_interface.dart

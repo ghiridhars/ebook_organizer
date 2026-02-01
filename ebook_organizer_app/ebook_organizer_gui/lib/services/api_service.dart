@@ -1,18 +1,103 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/ebook.dart';
 import '../models/library_stats.dart';
 import '../models/cloud_provider.dart';
+import '../utils/app_config.dart';
+
+/// Custom exception for API errors with detailed information
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  final String? responseBody;
+
+  ApiException(this.message, {this.statusCode, this.responseBody});
+
+  @override
+  String toString() => statusCode != null 
+      ? 'ApiException: $message (HTTP $statusCode)' 
+      : 'ApiException: $message';
+}
 
 class ApiService {
-  static const String baseUrl = 'http://127.0.0.1:8000';
+  final AppConfig _config = AppConfig.instance;
+
+  String get baseUrl => _config.apiBaseUrl;
+
+  /// Make a GET request with proper error handling and timeout
+  Future<http.Response> _get(String path, {Duration? timeout}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    try {
+      return await http.get(uri).timeout(
+        timeout ?? _config.requestTimeout,
+        onTimeout: () => throw TimeoutException('Request timed out'),
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    } catch (e) {
+      // Handle network errors (SocketException on native, ClientException on web)
+      throw ApiException('Network error: Unable to connect to server. $e');
+    }
+  }
+
+  /// Make a POST request with proper error handling and timeout
+  Future<http.Response> _post(String path, {Map<String, dynamic>? body, Duration? timeout}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    try {
+      return await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: body != null ? json.encode(body) : null,
+      ).timeout(
+        timeout ?? _config.requestTimeout,
+        onTimeout: () => throw TimeoutException('Request timed out'),
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    } catch (e) {
+      throw ApiException('Network error: Unable to connect to server. $e');
+    }
+  }
+
+  /// Make a PATCH request with proper error handling and timeout
+  Future<http.Response> _patch(String path, {required Map<String, dynamic> body, Duration? timeout}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    try {
+      return await http.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(body),
+      ).timeout(
+        timeout ?? _config.requestTimeout,
+        onTimeout: () => throw TimeoutException('Request timed out'),
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    } catch (e) {
+      throw ApiException('Network error: Unable to connect to server. $e');
+    }
+  }
+
+  /// Make a DELETE request with proper error handling and timeout
+  Future<http.Response> _delete(String path, {Duration? timeout}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    try {
+      return await http.delete(uri).timeout(
+        timeout ?? _config.requestTimeout,
+        onTimeout: () => throw TimeoutException('Request timed out'),
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    } catch (e) {
+      throw ApiException('Network error: Unable to connect to server. $e');
+    }
+  }
 
   // Health Check
   Future<bool> isBackendAvailable() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/health')).timeout(
-        const Duration(seconds: 3),
-      );
+      final response = await _get('/health', timeout: _config.healthCheckTimeout);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -40,71 +125,103 @@ class ApiService {
     };
 
     final uri = Uri.parse('$baseUrl/api/ebooks/').replace(queryParameters: queryParams);
-    final response = await http.get(uri);
+    try {
+      final response = await http.get(uri).timeout(_config.requestTimeout);
 
-    if (response.statusCode == 200) {
-      final List<dynamic> data = json.decode(response.body);
-      return data.map((json) => Ebook.fromJson(json)).toList();
-    } else {
-      throw Exception('Failed to load ebooks: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data.map((json) => Ebook.fromJson(json)).toList();
+      } else {
+        throw ApiException(
+          'Failed to load ebooks',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        );
+      }
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    } catch (e) {
+      throw ApiException('Network error: Unable to connect to server. $e');
     }
   }
 
   // Get single ebook
   Future<Ebook> getEbook(int id) async {
-    final response = await http.get(Uri.parse('$baseUrl/api/ebooks/$id'));
+    final response = await _get('/api/ebooks/$id');
 
     if (response.statusCode == 200) {
       return Ebook.fromJson(json.decode(response.body));
+    } else if (response.statusCode == 404) {
+      throw ApiException('Ebook not found', statusCode: 404);
     } else {
-      throw Exception('Failed to load ebook');
+      throw ApiException(
+        'Failed to load ebook',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
   // Update ebook metadata
   Future<Ebook> updateEbook(int id, Map<String, dynamic> updates) async {
-    final response = await http.patch(
-      Uri.parse('$baseUrl/api/ebooks/$id'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode(updates),
-    );
+    final response = await _patch('/api/ebooks/$id', body: updates);
 
     if (response.statusCode == 200) {
       return Ebook.fromJson(json.decode(response.body));
+    } else if (response.statusCode == 404) {
+      throw ApiException('Ebook not found', statusCode: 404);
     } else {
-      throw Exception('Failed to update ebook');
+      throw ApiException(
+        'Failed to update ebook',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
   // Delete ebook
   Future<void> deleteEbook(int id) async {
-    final response = await http.delete(Uri.parse('$baseUrl/api/ebooks/$id'));
+    final response = await _delete('/api/ebooks/$id');
 
-    if (response.statusCode != 200) {
-      throw Exception('Failed to delete ebook');
+    if (response.statusCode == 404) {
+      throw ApiException('Ebook not found', statusCode: 404);
+    } else if (response.statusCode != 200) {
+      throw ApiException(
+        'Failed to delete ebook',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
   // Get library statistics
   Future<LibraryStats> getLibraryStats() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/ebooks/stats/library'));
+    final response = await _get('/api/ebooks/stats/library');
 
     if (response.statusCode == 200) {
       return LibraryStats.fromJson(json.decode(response.body));
     } else {
-      throw Exception('Failed to load library stats');
+      throw ApiException(
+        'Failed to load library stats',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
   // Get cloud providers status
   Future<List<CloudProvider>> getCloudProviders() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/cloud/providers'));
+    final response = await _get('/api/cloud/providers');
 
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
       return data.map((json) => CloudProvider.fromJson(json)).toList();
     } else {
-      throw Exception('Failed to load cloud providers');
+      throw ApiException(
+        'Failed to load cloud providers',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
@@ -113,30 +230,37 @@ class ApiService {
     String? provider,
     bool fullSync = false,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/sync/trigger'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
+    final response = await _post(
+      '/api/sync/trigger',
+      body: {
         if (provider != null) 'provider': provider,
         'full_sync': fullSync,
-      }),
+      },
     );
 
     if (response.statusCode == 200) {
       return json.decode(response.body);
     } else {
-      throw Exception('Failed to trigger sync');
+      throw ApiException(
+        'Failed to trigger sync',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 
   // Get sync status
   Future<Map<String, dynamic>> getSyncStatus() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/sync/status'));
+    final response = await _get('/api/sync/status');
 
     if (response.statusCode == 200) {
       return json.decode(response.body);
     } else {
-      throw Exception('Failed to get sync status');
+      throw ApiException(
+        'Failed to get sync status',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 }

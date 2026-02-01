@@ -1,8 +1,7 @@
-import 'dart:io';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 import '../models/ebook.dart';
+import '../utils/database_utils.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -17,11 +16,8 @@ class DatabaseService {
   }
 
   Future<Database> _initDB(String filePath) async {
-    // Initialize FFI for desktop platforms
-    if (Platform.isWindows || Platform.isLinux) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
+    // Initialize FFI for desktop platforms (uses shared utility)
+    DatabaseUtils.initializeFfi();
 
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);

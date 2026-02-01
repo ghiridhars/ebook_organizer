@@ -30,9 +30,10 @@ app = FastAPI(
 )
 
 # CORS Configuration for Flutter Frontend
+# Note: Wildcards in origins don't work as expected; use allow_origin_regex or explicit list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
