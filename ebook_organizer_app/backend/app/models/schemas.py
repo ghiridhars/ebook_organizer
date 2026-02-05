@@ -96,3 +96,46 @@ class LibraryStats(BaseModel):
     by_cloud_provider: dict
     total_size_mb: float
     last_sync: Optional[datetime] = None
+
+# ========== Metadata Classification Models ==========
+
+class ClassificationRequest(BaseModel):
+    """Request for ebook classification"""
+    file_path: str = Field(..., description="Absolute path to ebook file")
+
+class ClassificationResponse(BaseModel):
+    """Response with classification results"""
+    success: bool
+    file_path: str
+    category: Optional[str] = None
+    sub_genre: Optional[str] = None
+    author: Optional[str] = None
+    metadata_source: str = "unknown"  # embedded, filename, folder, api, title, unknown
+    error: Optional[str] = None
+
+class ComprehensiveMetadataRequest(BaseModel):
+    """Request for comprehensive metadata extraction with classification"""
+    file_path: str = Field(..., description="Absolute path to ebook file")
+    include_classification: bool = Field(True, description="Include classification in response")
+
+class BasicMetadata(BaseModel):
+    """Basic embedded metadata"""
+    title: Optional[str] = None
+    author: Optional[str] = None
+    description: Optional[str] = None
+    publisher: Optional[str] = None
+    language: Optional[str] = None
+    date: Optional[str] = None
+    subjects: List[str] = []
+    identifier: Optional[str] = None
+
+class ComprehensiveMetadataResponse(BaseModel):
+    """Response with comprehensive metadata including classification"""
+    success: bool
+    file_path: str
+    file_format: str
+    # Embedded metadata
+    embedded_metadata: Optional[BasicMetadata] = None
+    # Classification results
+    classification: Optional[ClassificationResponse] = None
+    error: Optional[str] = None

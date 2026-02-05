@@ -15,8 +15,18 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
-    """Initialize database tables"""
+    """Initialize database tables and FTS index"""
     Base.metadata.create_all(bind=engine)
+    
+    # Initialize FTS5 for full-text search
+    try:
+        from app.services.search_service import init_fts
+        db = SessionLocal()
+        init_fts(db)
+        db.close()
+    except Exception as e:
+        # FTS init failure is non-fatal, fallback search will work
+        print(f"FTS initialization note: {e}")
 
 def get_db():
     """Dependency for FastAPI to get database session"""
@@ -25,3 +35,4 @@ def get_db():
         yield db
     finally:
         db.close()
+

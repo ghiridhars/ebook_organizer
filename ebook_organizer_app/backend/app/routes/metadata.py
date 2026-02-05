@@ -234,6 +234,185 @@ async def extract_metadata(file: UploadFile = File(...)) -> Dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== Classification Endpoints ====================
+
+@router.post("/classify")
+async def classify_file(request: Dict):
+    """
+    Classify an ebook file to determine category, sub-genre, and author.
+    
+    Uses multiple classification strategies:
+    1. Embedded metadata (genre/subject)
+    2. Folder-based classification
+    3. Open Library API lookup
+    4. Title/filename keyword analysis
+    """
+    from app.services.metadata_classifier import classify_book, is_valid_author
+    from app.services.metadata_service import metadata_service
+    from pathlib import Path
+    from app.models import ClassificationResponse
+    
+    file_path = request.get("file_path")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="file_path is required")
+    
+    # Validate file exists
+    if not os.path.exists(file_path):
+        return ClassificationResponse(
+            success=False,
+            file_path=file_path,
+            error=f"File not found: {file_path}"
+        )
+    
+    # Check format is supported
+    if not metadata_service.is_supported(file_path):
+        fmt = metadata_service.get_format(file_path)
+        return ClassificationResponse(
+            success=False,
+            file_path=file_path,
+            error=f"Unsupported format: {fmt}"
+        )
+    
+    try:
+        # Read embedded metadata first
+        embedded_metadata = await metadata_service.read_metadata(file_path)
+        embedded_genre = None
+        embedded_author = None
+        
+        if embedded_metadata:
+            # Use first subject as genre if available
+            if embedded_metadata.subjects:
+                embedded_genre = embedded_metadata.subjects[0]
+            embedded_author = embedded_metadata.author
+        
+        # Run classification
+        classification_result = classify_book(
+            filepath=Path(file_path),
+            embedded_genre=embedded_genre,
+            embedded_author=embedded_author
+        )
+        
+        return ClassificationResponse(
+            success=True,
+            file_path=file_path,
+            category=classification_result.category,
+            sub_genre=classification_result.sub_genre,
+            author=classification_result.author,
+            metadata_source=classification_result.metadata_source
+        )
+        
+    except Exception as e:
+        return ClassificationResponse(
+            success=False,
+            file_path=file_path,
+            error=str(e)
+        )
+
+
+@router.post("/extract-comprehensive")
+async def extract_comprehensive_metadata(request: Dict):
+    """
+    Extract comprehensive metadata including embedded data and classification.
+    
+    Returns both:
+    - Embedded metadata (title, author, description, etc.)
+    - Classification results (category, sub_genre, author refinement)
+    """
+    from app.services.metadata_classifier import classify_book
+    from app.services.metadata_service import metadata_service
+    from pathlib import Path
+    from app.models import (
+        ComprehensiveMetadataResponse,
+        ClassificationResponse,
+        BasicMetadata
+    )
+    
+    file_path = request.get("file_path")
+    include_classification = request.get("include_classification", True)
+    
+    if not file_path:
+        raise HTTPException(status_code=400, detail="file_path is required")
+    
+    # Validate file exists
+    if not os.path.exists(file_path):
+        return ComprehensiveMetadataResponse(
+            success=False,
+            file_path=file_path,
+            file_format="unknown",
+            error=f"File not found: {file_path}"
+        )
+    
+    file_format = metadata_service.get_format(file_path)
+    
+    # Check format is supported
+    if not metadata_service.is_supported(file_path):
+        return ComprehensiveMetadataResponse(
+            success=False,
+            file_path=file_path,
+            file_format=file_format,
+            error=f"Unsupported format: {file_format}"
+        )
+    
+    try:
+        # Read embedded metadata
+        embedded_metadata = await metadata_service.read_metadata(file_path)
+        
+        basic_metadata = None
+        if embedded_metadata:
+            basic_metadata = BasicMetadata(
+                title=embedded_metadata.title,
+                author=embedded_metadata.author,
+                description=embedded_metadata.description,
+                publisher=embedded_metadata.publisher,
+                language=embedded_metadata.language,
+                date=embedded_metadata.date,
+                subjects=embedded_metadata.subjects or [],
+                identifier=embedded_metadata.identifier
+            )
+        
+        # Run classification if requested
+        classification = None
+        if include_classification:
+            embedded_genre = None
+            embedded_author = None
+            
+            if embedded_metadata:
+                if embedded_metadata.subjects:
+                    embedded_genre = embedded_metadata.subjects[0]
+                embedded_author = embedded_metadata.author
+            
+            classification_result = classify_book(
+                filepath=Path(file_path),
+                embedded_genre=embedded_genre,
+                embedded_author=embedded_author
+            )
+            
+            classification = ClassificationResponse(
+                success=True,
+                file_path=file_path,
+                category=classification_result.category,
+                sub_genre=classification_result.sub_genre,
+                author=classification_result.author,
+                metadata_source=classification_result.metadata_source
+            )
+        
+        return ComprehensiveMetadataResponse(
+            success=True,
+            file_path=file_path,
+            file_format=file_format,
+            embedded_metadata=basic_metadata,
+            classification=classification
+        )
+        
+    except Exception as e:
+        return ComprehensiveMetadataResponse(
+            success=False,
+            file_path=file_path,
+            file_format=file_format,
+            error=str(e)
+        )
+
+
 @router.post("/analyze-cloud-file/{provider}/{file_id}")
 async def analyze_cloud_file(provider: str, file_id: str):
     """
