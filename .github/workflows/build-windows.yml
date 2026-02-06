@@ -1,0 +1,132 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:  # Allow manual trigger for testing
+
+env:
+  PYTHON_VERSION: '3.11'
+  FLUTTER_VERSION: '3.35.6'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      # 1. Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # 2. Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: 'ebook_organizer_app/backend/requirements.txt'
+      
+      # 3. Install Python dependencies
+      - name: Install Python dependencies
+        run: |
+          cd ebook_organizer_app/backend
+          pip install -r requirements.txt
+          pip install pyinstaller
+        shell: pwsh
+      
+      # 4. Build Python backend with PyInstaller
+      - name: Build Backend Executable
+        run: |
+          cd ebook_organizer_app/backend
+          pyinstaller --onefile --name backend --clean `
+            --add-data "app;app" `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols `
+            --hidden-import uvicorn.protocols.http `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.websockets `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.lifespan `
+            --hidden-import uvicorn.lifespan.on `
+            --hidden-import sqlalchemy.dialects.sqlite `
+            run.py
+        shell: pwsh
+      
+      # 5. Verify backend executable was created
+      - name: Verify Backend Build
+        run: |
+          if (Test-Path "ebook_organizer_app/backend/dist/backend.exe") {
+            Write-Host "✓ Backend executable built successfully"
+            Get-Item "ebook_organizer_app/backend/dist/backend.exe" | Select-Object Name, Length
+          } else {
+            Write-Error "✗ Backend executable not found!"
+            exit 1
+          }
+        shell: pwsh
+      
+      # 6. Setup Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+      
+      # 7. Get Flutter dependencies
+      - name: Get Flutter dependencies
+        run: |
+          cd ebook_organizer_app/ebook_organizer_gui
+          flutter pub get
+        shell: pwsh
+      
+      # 8. Build Flutter Windows app
+      - name: Build Flutter Windows App
+        run: |
+          cd ebook_organizer_app/ebook_organizer_gui
+          flutter build windows --release
+        shell: pwsh
+      
+      # 9. Package everything together
+      - name: Package Release
+        run: |
+          # Create release directory
+          $releaseDir = "release/EbookOrganizer"
+          New-Item -ItemType Directory -Force -Path $releaseDir
+          
+          # Copy Flutter build output
+          $flutterBuild = "ebook_organizer_app/ebook_organizer_gui/build/windows/x64/runner/Release"
+          Copy-Item -Path "$flutterBuild/*" -Destination $releaseDir -Recurse
+          
+          # Create backend directory and copy executable
+          $backendDir = "$releaseDir/backend"
+          New-Item -ItemType Directory -Force -Path $backendDir
+          Copy-Item "ebook_organizer_app/backend/dist/backend.exe" -Destination $backendDir
+          
+          # Create empty database placeholder
+          New-Item -ItemType File -Path "$backendDir/ebook_organizer.db" -Force
+          
+          Write-Host "✓ Release packaged successfully"
+          Get-ChildItem -Path $releaseDir -Recurse | Select-Object FullName
+        shell: pwsh
+      
+      # 10. Upload as artifact
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EbookOrganizer-Windows-${{ github.ref_name }}
+          path: release/EbookOrganizer/
+          retention-days: 30
+      
+      # 11. Create GitHub Release (only on tag push)
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/EbookOrganizer/**
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

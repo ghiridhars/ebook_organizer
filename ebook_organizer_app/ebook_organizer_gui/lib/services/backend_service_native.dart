@@ -13,15 +13,19 @@ class BackendConfig {
   static const Duration healthCheckInterval = Duration(milliseconds: 500);
   static const int maxRetries = 60; // 30 seconds with 500ms interval
   static const Duration retryDelay = Duration(milliseconds: 500);
+  static const String bundledBackendName = 'backend.exe';
+  static const String bundledBackendDir = 'backend';
 }
 
 /// Backend service for managing the Python FastAPI backend process
 class BackendService {
   static BackendService? _instance;
   Shell? _shell;
+  io.Process? _backendProcess;  // For bundled exe mode
   bool _isRunning = false;
   String? _lastError;
   DateTime? _startedAt;
+  bool _usingBundledBackend = false;
 
   BackendService._();
 
@@ -33,6 +37,7 @@ class BackendService {
   bool get isRunning => _isRunning;
   String? get lastError => _lastError;
   DateTime? get startedAt => _startedAt;
+  bool get usingBundledBackend => _usingBundledBackend;
   
   String get baseUrl => 'http://${BackendConfig.host}:${BackendConfig.port}';
   String get healthUrl => '$baseUrl/health';
@@ -103,7 +108,35 @@ class BackendService {
     return false;
   }
 
-  /// Find the backend directory relative to current working directory
+  /// Find the bundled backend executable (for release mode)
+  /// Returns the path to backend.exe if found, null otherwise
+  String? _findBundledBackend() {
+    // Only look for bundled backend in release mode
+    if (!kReleaseMode) {
+      return null;
+    }
+
+    // Get the directory where the Flutter executable is located
+    final exeDir = path.dirname(io.Platform.resolvedExecutable);
+    
+    // Look for backend.exe in the backend subdirectory
+    final bundledPath = path.join(
+      exeDir,
+      BackendConfig.bundledBackendDir,
+      BackendConfig.bundledBackendName,
+    );
+    
+    _log('Looking for bundled backend at: $bundledPath');
+    
+    if (io.File(bundledPath).existsSync()) {
+      _log('Found bundled backend executable');
+      return bundledPath;
+    }
+    
+    return null;
+  }
+
+  /// Find the backend directory relative to current working directory (development mode)
   String? _findBackendDirectory() {
     final currentDir = io.Directory.current.path;
     
@@ -150,6 +183,7 @@ class BackendService {
     }
 
     _lastError = null;
+    _usingBundledBackend = false;
 
     try {
       // Check if backend is already running (maybe from another instance)
@@ -175,37 +209,66 @@ class BackendService {
         }
       }
 
-      // Find backend directory
-      final backendDir = _findBackendDirectory();
-      if (backendDir == null) {
-        _lastError = 'Backend directory not found. Current dir: ${io.Directory.current.path}';
-        _log(_lastError!);
-        return false;
-      }
-
-      _log('Found backend at: $backendDir');
-
-      // Find Python executable
-      final pythonCmd = _findPythonExecutable(backendDir);
-      _log('Using Python: $pythonCmd');
-
-      // Create shell for running backend
-      _shell = Shell(
-        workingDirectory: backendDir,
-        environment: {'PYTHONUNBUFFERED': '1'},
-      );
-
-      // Start backend in background
-      _log('Starting backend with: $pythonCmd -m app.main');
+      // Try to find bundled backend first (for release mode)
+      final bundledBackend = _findBundledBackend();
       
-      _shell!.run('$pythonCmd -m app.main').then((_) {
-        _log('Backend process exited normally');
-        _isRunning = false;
-      }).catchError((error) {
-        _lastError = 'Backend error: $error';
-        _log(_lastError!);
-        _isRunning = false;
-      });
+      if (bundledBackend != null) {
+        // Use bundled backend.exe
+        _log('Starting bundled backend: $bundledBackend');
+        _usingBundledBackend = true;
+        
+        final backendDir = path.dirname(bundledBackend);
+        _backendProcess = await io.Process.start(
+          bundledBackend,
+          [],
+          workingDirectory: backendDir,
+          environment: {'PYTHONUNBUFFERED': '1'},
+        );
+        
+        // Listen for process output (for logging)
+        _backendProcess!.stdout.transform(utf8.decoder).listen((data) {
+          _log('Backend stdout: $data');
+        });
+        _backendProcess!.stderr.transform(utf8.decoder).listen((data) {
+          _log('Backend stderr: $data');
+        });
+        
+        // Handle process exit
+        _backendProcess!.exitCode.then((code) {
+          _log('Backend process exited with code: $code');
+          _isRunning = false;
+          _backendProcess = null;
+        });
+      } else {
+        // Fall back to Python development mode
+        final backendDir = _findBackendDirectory();
+        if (backendDir == null) {
+          _lastError = 'Backend not found. Current dir: ${io.Directory.current.path}';
+          _log(_lastError!);
+          return false;
+        }
+
+        _log('Found backend at: $backendDir');
+
+        final pythonCmd = _findPythonExecutable(backendDir);
+        _log('Using Python: $pythonCmd');
+
+        _shell = Shell(
+          workingDirectory: backendDir,
+          environment: {'PYTHONUNBUFFERED': '1'},
+        );
+
+        _log('Starting backend with: $pythonCmd -m app.main');
+        
+        _shell!.run('$pythonCmd -m app.main').then((_) {
+          _log('Backend process exited normally');
+          _isRunning = false;
+        }).catchError((error) {
+          _lastError = 'Backend error: $error';
+          _log(_lastError!);
+          _isRunning = false;
+        });
+      }
 
       // Wait for backend to become healthy
       final healthy = await _waitForHealthy();
@@ -213,7 +276,7 @@ class BackendService {
       if (healthy) {
         _isRunning = true;
         _startedAt = DateTime.now();
-        _log('Backend started successfully');
+        _log('Backend started successfully (bundled: $_usingBundledBackend)');
         return true;
       } else {
         _lastError = 'Backend failed to start within timeout';
@@ -230,18 +293,34 @@ class BackendService {
 
   /// Stop the backend process gracefully
   Future<void> stopBackend() async {
-    if (_shell != null) {
+    _log('Stopping backend...');
+    
+    // Stop bundled backend process if running
+    if (_backendProcess != null) {
       try {
-        _log('Stopping backend...');
-        _shell!.kill();
-        _shell = null;
-        _isRunning = false;
-        _startedAt = null;
-        _log('Backend stopped');
+        _backendProcess!.kill();
+        _backendProcess = null;
+        _log('Bundled backend process stopped');
       } catch (e) {
-        _log('Error stopping backend: $e');
+        _log('Error stopping bundled backend: $e');
       }
     }
+    
+    // Stop shell-based backend if running  
+    if (_shell != null) {
+      try {
+        _shell!.kill();
+        _shell = null;
+        _log('Shell backend stopped');
+      } catch (e) {
+        _log('Error stopping shell backend: $e');
+      }
+    }
+    
+    _isRunning = false;
+    _startedAt = null;
+    _usingBundledBackend = false;
+    _log('Backend stopped');
   }
 
   /// Restart the backend process
