@@ -44,12 +44,18 @@ a = Analysis(
         # Pydantic
         'pydantic',
         'pydantic_settings',
-        # FastAPI
+        # FastAPI & Starlette parts
         'fastapi',
+        'fastapi.middleware',
+        'fastapi.middleware.cors',
         'starlette',
+        'starlette.middleware',
+        'starlette.middleware.cors',
+        'starlette.middleware.base',
         # Other dependencies
         'email_validator',
         'multipart',
+        'python_multipart',
     ],
     hookspath=[],
     hooksconfig={},
