@@ -103,12 +103,18 @@ async def get_ebooks(
     author: Optional[str] = None,
     search: Optional[str] = None,
     format: Optional[str] = None,
+    source_path: Optional[str] = Query(None, description="Filter by source path prefix"),
     db: Session = Depends(get_db)
 ):
     """
-    Get list of ebooks with filtering and pagination
+    Get list of ebooks with filtering and pagination.
+    Use source_path to scope results to a specific folder.
     """
     query = db.query(Ebook)
+    
+    # Filter by source path (scoped library)
+    if source_path:
+        query = query.filter(Ebook.cloud_file_path.startswith(source_path))
     
     # Apply filters
     if category:
@@ -202,34 +208,42 @@ async def delete_ebook(ebook_id: int, db: Session = Depends(get_db)):
     return {"message": "Ebook deleted successfully"}
 
 @router.get("/stats/library", response_model=LibraryStats)
-async def get_library_stats(db: Session = Depends(get_db)):
-    """Get library statistics"""
-    total_books = db.query(func.count(Ebook.id)).scalar()
+async def get_library_stats(
+    source_path: Optional[str] = Query(None, description="Filter by source path prefix"),
+    db: Session = Depends(get_db)
+):
+    """Get library statistics, optionally scoped to a source path"""
+    # Build base filter
+    base_filter = []
+    if source_path:
+        base_filter.append(Ebook.cloud_file_path.startswith(source_path))
+    
+    total_books = db.query(func.count(Ebook.id)).filter(*base_filter).scalar() or 0
     
     # Group by category
     by_category = {}
-    categories = db.query(Ebook.category, func.count(Ebook.id)).group_by(Ebook.category).all()
+    categories = db.query(Ebook.category, func.count(Ebook.id)).filter(*base_filter).group_by(Ebook.category).all()
     for category, count in categories:
         by_category[category or "Unknown"] = count
     
     # Group by format
     by_format = {}
-    formats = db.query(Ebook.file_format, func.count(Ebook.id)).group_by(Ebook.file_format).all()
-    for format, count in formats:
-        by_format[format or "Unknown"] = count
+    formats = db.query(Ebook.file_format, func.count(Ebook.id)).filter(*base_filter).group_by(Ebook.file_format).all()
+    for fmt, count in formats:
+        by_format[fmt or "Unknown"] = count
     
     # Group by cloud provider
     by_cloud_provider = {}
-    providers = db.query(Ebook.cloud_provider, func.count(Ebook.id)).group_by(Ebook.cloud_provider).all()
+    providers = db.query(Ebook.cloud_provider, func.count(Ebook.id)).filter(*base_filter).group_by(Ebook.cloud_provider).all()
     for provider, count in providers:
         by_cloud_provider[provider] = count
     
     # Calculate total size
-    total_size_bytes = db.query(func.sum(Ebook.file_size)).scalar() or 0
+    total_size_bytes = db.query(func.sum(Ebook.file_size)).filter(*base_filter).scalar() or 0
     total_size_mb = round(total_size_bytes / (1024 * 1024), 2)
     
     # Get last sync time
-    last_sync = db.query(func.max(Ebook.last_synced)).scalar()
+    last_sync = db.query(func.max(Ebook.last_synced)).filter(*base_filter).scalar()
     
     return LibraryStats(
         total_books=total_books,

@@ -113,6 +113,7 @@ class ApiService {
     String? author,
     String? search,
     String? format,
+    String? sourcePath,
   }) async {
     final queryParams = {
       'skip': skip.toString(),
@@ -122,6 +123,7 @@ class ApiService {
       if (author != null) 'author': author,
       if (search != null) 'search': search,
       if (format != null) 'format': format,
+      if (sourcePath != null) 'source_path': sourcePath,
     };
 
     final uri = Uri.parse('$baseUrl/api/ebooks/').replace(queryParameters: queryParams);
@@ -195,8 +197,12 @@ class ApiService {
   }
 
   // Get library statistics
-  Future<LibraryStats> getLibraryStats() async {
-    final response = await _get('/api/ebooks/stats/library');
+  Future<LibraryStats> getLibraryStats({String? sourcePath}) async {
+    String path = '/api/ebooks/stats/library';
+    if (sourcePath != null) {
+      path += '?source_path=${Uri.encodeComponent(sourcePath)}';
+    }
+    final response = await _get(path);
 
     if (response.statusCode == 200) {
       return LibraryStats.fromJson(json.decode(response.body));
@@ -229,12 +235,14 @@ class ApiService {
   Future<Map<String, dynamic>> triggerSync({
     String? provider,
     bool fullSync = false,
+    String? localPath,
   }) async {
     final response = await _post(
       '/api/sync/trigger',
       body: {
         if (provider != null) 'provider': provider,
         'full_sync': fullSync,
+        if (localPath != null) 'local_path': localPath,
       },
     );
 
@@ -258,6 +266,34 @@ class ApiService {
     } else {
       throw ApiException(
         'Failed to get sync status',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  Future<void> authenticateProvider(String provider) async {
+    final response = await _post(
+      '/cloud/providers/$provider/authenticate',
+    );
+
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Failed to authenticate provider',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  Future<void> disconnectProvider(String provider) async {
+    final response = await _post(
+      '/cloud/providers/$provider/disconnect',
+    );
+
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Failed to disconnect provider',
         statusCode: response.statusCode,
         responseBody: response.body,
       );

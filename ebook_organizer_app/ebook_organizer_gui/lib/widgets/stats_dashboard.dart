@@ -8,12 +8,21 @@ class StatsDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Consumer<LibraryProvider>(
-      builder: (context, provider, _) {
-        if (provider.isLoading) {
+      builder: (context, cloudProvider, _) {
+        if (cloudProvider.isLoading) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final stats = provider.stats;
+        final cloudStats = cloudProvider.stats;
+
+        // Use cloud stats directly (already scoped by backend)
+        // Don't merge with local stats to avoid duplication
+        final totalBooks = cloudStats.totalBooks;
+        final totalSizeMb = cloudStats.totalSizeMb;
+        
+        final byCategory = Map<String, int>.from(cloudStats.byCategory);
+        final byFormat = Map<String, int>.from(cloudStats.byFormat);
+        final byCloudProvider = Map<String, int>.from(cloudStats.byCloudProvider);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -38,7 +47,7 @@ class StatsDashboard extends StatelessWidget {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         Text(
-                          '${stats.totalBooks}',
+                          '$totalBooks',
                           style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
@@ -54,7 +63,7 @@ class StatsDashboard extends StatelessWidget {
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                         Text(
-                          '${stats.totalSizeMb.toStringAsFixed(1)} MB',
+                          '${totalSizeMb.toStringAsFixed(1)} MB',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ],
@@ -66,7 +75,7 @@ class StatsDashboard extends StatelessWidget {
             const SizedBox(height: 16),
 
             // By Category
-            if (stats.byCategory.isNotEmpty) ...[
+            if (byCategory.isNotEmpty) ...[
               Text(
                 'By Category',
                 style: Theme.of(context).textTheme.titleLarge,
@@ -76,10 +85,10 @@ class StatsDashboard extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
-                    children: stats.byCategory.entries.map((entry) {
+                    children: byCategory.entries.map((entry) {
                       return ListTile(
                         leading: const Icon(Icons.category),
-                        title: Text(entry.key),
+                        title: Text(entry.key.isEmpty ? 'Uncategorized' : entry.key),
                         trailing: Chip(
                           label: Text('${entry.value}'),
                         ),
@@ -92,7 +101,7 @@ class StatsDashboard extends StatelessWidget {
             ],
 
             // By Format
-            if (stats.byFormat.isNotEmpty) ...[
+            if (byFormat.isNotEmpty) ...[
               Text(
                 'By Format',
                 style: Theme.of(context).textTheme.titleLarge,
@@ -102,7 +111,7 @@ class StatsDashboard extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
-                    children: stats.byFormat.entries.map((entry) {
+                    children: byFormat.entries.map((entry) {
                       return ListTile(
                         leading: Icon(_getFormatIcon(entry.key)),
                         title: Text(entry.key.toUpperCase()),
@@ -117,10 +126,10 @@ class StatsDashboard extends StatelessWidget {
               const SizedBox(height: 16),
             ],
 
-            // By Cloud Provider
-            if (stats.byCloudProvider.isNotEmpty) ...[
+            // By Provider
+            if (byCloudProvider.isNotEmpty) ...[
               Text(
-                'By Cloud Provider',
+                'By Storage',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 8),
@@ -128,12 +137,14 @@ class StatsDashboard extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
-                    children: stats.byCloudProvider.entries.map((entry) {
+                    children: byCloudProvider.entries.map((entry) {
+                      final isLocal = entry.key == 'Local Storage';
                       return ListTile(
-                        leading: const Icon(Icons.cloud),
+                        leading: Icon(isLocal ? Icons.computer : Icons.cloud),
                         title: Text(_formatProviderName(entry.key)),
                         trailing: Chip(
                           label: Text('${entry.value}'),
+                          backgroundColor: isLocal ? Theme.of(context).colorScheme.tertiaryContainer : null,
                         ),
                       );
                     }).toList(),

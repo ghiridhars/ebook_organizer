@@ -180,21 +180,53 @@ class MetadataService:
         """Read metadata from PDF file using pypdf"""
         from pypdf import PdfReader
         
-        reader = PdfReader(file_path)
-        info = reader.metadata
-        
-        if not info:
+        try:
+            reader = PdfReader(file_path)
+            info = reader.metadata
+            
+            if not info:
+                return EbookMetadata()
+            
+            return EbookMetadata(
+                title=self._clean_pdf_value(info.get('/Title')),
+                author=self._clean_pdf_value(info.get('/Author')),
+                description=self._clean_pdf_value(info.get('/Subject')),
+                publisher=self._clean_pdf_value(info.get('/Creator')),
+            )
+        except Exception as e:
+            print(f"Error reading PDF metadata {file_path}: {e}")
+            # Return empty metadata instead of failing
             return EbookMetadata()
+
+    def _clean_pdf_value(self, value: Any) -> Optional[str]:
+        """Clean and convert PDF metadata value to string"""
+        if value is None:
+            return None
+            
+        # Handle IndirectObject (pypdf)
+        if hasattr(value, "get_object"):
+            try:
+                value = value.get_object()
+            except:
+                pass
         
-        # PDF standard metadata fields
-        return EbookMetadata(
-            title=info.get('/Title'),
-            author=info.get('/Author'),
-            description=info.get('/Subject'),  # PDF uses Subject for description
-            publisher=info.get('/Creator'),    # Often the creating software
-            # PDF doesn't have standard fields for:
-            # language, date (has /CreationDate but format varies), subjects
-        )
+        if isinstance(value, str):
+            cleaned = value.strip().strip('/').strip()
+            return cleaned if cleaned else None
+            
+        if isinstance(value, bytes):
+            try:
+                cleaned = value.decode('utf-8', errors='ignore').strip()
+                return cleaned if cleaned else None
+            except:
+                return None
+                
+        # Fallback to string representation, but avoid IndirectObject repr
+        s = str(value)
+        if s.startswith("IndirectObject") or s.startswith("<"):
+            return None
+            
+        return s
     
     async def _write_pdf_metadata(self, file_path: str, metadata: EbookMetadata) -> bool:
         """Write metadata to PDF file using pypdf"""
@@ -264,27 +296,11 @@ class MetadataService:
         Read metadata from MOBI file.
         
         Note: MOBI format is proprietary (Amazon). Writing is very limited.
-        The 'mobi' library can read but not write metadata effectively.
+        Using raw header parsing as 'mobi' library is primarily for extraction.
         """
-        try:
-            from mobi import Mobi
-            
-            book = Mobi(file_path)
-            book.parse()
-            
-            # Extract available metadata
-            return EbookMetadata(
-                title=book.title() if hasattr(book, 'title') else None,
-                author=book.author() if hasattr(book, 'author') else None,
-                # MOBI has limited metadata fields exposed by the library
-            )
-        except ImportError:
-            print("mobi library not installed. Install with: pip install mobi")
-            return EbookMetadata()
-        except Exception as e:
-            print(f"Error reading MOBI metadata: {e}")
-            # Try alternative approach using raw MOBI header parsing
-            return await self._read_mobi_metadata_raw(file_path)
+        # unexpected-import-fix: 'mobi' library installed via pip doesn't expose Mobi class.
+        # It only exposes 'extract'. So we use our raw parser instead.
+        return await self._read_mobi_metadata_raw(file_path)
     
     async def _read_mobi_metadata_raw(self, file_path: str) -> EbookMetadata:
         """

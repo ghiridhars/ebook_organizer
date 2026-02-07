@@ -40,4 +40,20 @@ class CloudProvider {
     if (!isAuthenticated) return 'Not Connected';
     return 'Connected';
   }
+
+  CloudProvider copyWith({
+    String? provider,
+    bool? isEnabled,
+    bool? isAuthenticated,
+    DateTime? lastSync,
+    String? folderPath,
+  }) {
+    return CloudProvider(
+      provider: provider ?? this.provider,
+      isEnabled: isEnabled ?? this.isEnabled,
+      isAuthenticated: isAuthenticated ?? this.isAuthenticated,
+      lastSync: lastSync ?? this.lastSync,
+      folderPath: folderPath ?? this.folderPath,
+    );
+  }
 }

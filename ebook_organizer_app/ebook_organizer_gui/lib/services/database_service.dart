@@ -24,9 +24,18 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Drop and recreate table to ensure schema matches
+      await db.execute('DROP TABLE IF EXISTS ebooks');
+      await _createDB(db, newVersion);
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {

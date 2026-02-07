@@ -71,24 +71,64 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           // Sync button
-          Consumer<LibraryProvider>(
-            builder: (context, provider, _) {
+          Consumer2<LibraryProvider, LocalLibraryProvider>(
+            builder: (context, libraryProvider, localProvider, _) {
               return IconButton(
-                icon: provider.isSyncing
+                icon: libraryProvider.isSyncing
                     ? const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.sync),
-                onPressed: provider.isSyncing
+                onPressed: libraryProvider.isSyncing
                     ? null
-                    : () => provider.triggerSync(),
+                    : () async {
+                        if (localProvider.libraryPath == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Please select a local library folder in the "Local" tab first'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                          return;
+                        }
+                        final path = localProvider.libraryPath;
+                        await libraryProvider.triggerSync(
+                          localPath: path,
+                        );
+                        // Also trigger ebook provider to load books from backend
+                        if (context.mounted) {
+                          await context.read<EbookProvider>().syncWithBackend(sourcePath: path);
+                        }
+                      },
                 tooltip: 'Sync with cloud',
               );
             },
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(24.0),
+          child: Consumer<LibraryProvider>(
+            builder: (context, provider, _) {
+              if (provider.isSyncing && provider.syncStatus != null) {
+                final status = provider.syncStatus!;
+                final msg = "${status['stage'] ?? 'Syncing'}... (${status['books_added']} added)";
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      msg,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const LinearProgressIndicator(minHeight: 2),
+                  ],
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
       ),
       body: screens[_selectedIndex],
       bottomNavigationBar: NavigationBar(
@@ -236,7 +276,7 @@ class SettingsView extends StatelessWidget {
                     trailing: Switch(
                       value: cloudProvider.isEnabled,
                       onChanged: (value) {
-                        // TODO: Implement enable/disable
+                        provider.toggleProvider(cloudProvider.provider, value);
                       },
                     ),
                   ),

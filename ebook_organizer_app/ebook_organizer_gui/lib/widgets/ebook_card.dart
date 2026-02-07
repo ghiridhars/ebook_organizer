@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/ebook.dart';
+import '../screens/ebook_detail_screen.dart';
 
 class EbookCard extends StatelessWidget {
   final Ebook ebook;
@@ -12,7 +13,12 @@ class EbookCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () {
-          // TODO: Navigate to ebook details
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => EbookDetailScreen(ebook: ebook),
+            ),
+          );
         },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -76,6 +76,7 @@ class SyncRequest(BaseModel):
     """Schema for sync request"""
     provider: Optional[str] = None  # If None, sync all enabled providers
     full_sync: bool = False  # If True, perform full sync instead of incremental
+    local_path: Optional[str] = None  # Path to local library folder
 
 class SyncResponse(BaseModel):
     """Schema for sync response"""
@@ -87,6 +88,17 @@ class SyncResponse(BaseModel):
     books_failed: int
     duration_seconds: float
     error_message: Optional[str] = None
+
+class SyncStatus(BaseModel):
+    """Schema for current sync status"""
+    is_active: bool
+    status: str # idle, scanning, processing, completed, failed
+    stage: Optional[str] = None # specific details like "extracting metadata"
+    current_file: Optional[str] = None
+    books_processed: int
+    books_added: int
+    books_updated: int
+    books_failed: int
 
 class LibraryStats(BaseModel):
     """Library statistics"""

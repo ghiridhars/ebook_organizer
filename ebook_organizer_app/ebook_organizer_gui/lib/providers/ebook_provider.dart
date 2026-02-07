@@ -29,16 +29,22 @@ class EbookProvider with ChangeNotifier {
   String? get selectedFormat => _selectedFormat;
 
   Future<void> initialize() async {
-    await loadEbooksFromLocal();
-    await checkBackendAndSync();
+    // Only check backend availability on startup
+    // Don't auto-load books - wait for user to select a folder
+    await checkBackendStatus();
+  }
+
+  Future<void> checkBackendStatus() async {
+    _isOnline = await _apiService.isBackendAvailable();
+    notifyListeners();
   }
 
   Future<void> checkBackendAndSync() async {
     _isOnline = await _apiService.isBackendAvailable();
     notifyListeners();
 
-    if (_isOnline) {
-      await syncWithBackend();
+    if (_isOnline && _activeSourcePath != null) {
+      await syncWithBackend(sourcePath: _activeSourcePath);
     }
   }
 
@@ -63,11 +69,20 @@ class EbookProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> syncWithBackend() async {
+  String? _activeSourcePath;
+  
+  String? get activeSourcePath => _activeSourcePath;
+
+  Future<void> syncWithBackend({String? sourcePath}) async {
     if (!_isOnline) return;
+    
+    // Set active source path
+    if (sourcePath != null) {
+      _activeSourcePath = sourcePath;
+    }
 
     try {
-      final backendEbooks = await _apiService.getEbooks();
+      final backendEbooks = await _apiService.getEbooks(sourcePath: _activeSourcePath);
       
       // Update local database
       await _dbService.clearAllEbooks();
