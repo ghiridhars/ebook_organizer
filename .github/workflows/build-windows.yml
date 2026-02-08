@@ -40,17 +40,63 @@ jobs:
           cd ebook_organizer_app/backend
           pyinstaller --onefile --name backend --clean `
             --add-data "app;app" `
+            --hidden-import fastapi `
+            --hidden-import fastapi.applications `
+            --hidden-import fastapi.routing `
+            --hidden-import fastapi.exceptions `
+            --hidden-import fastapi.params `
+            --hidden-import fastapi.security `
+            --hidden-import fastapi.middleware `
+            --hidden-import fastapi.middleware.cors `
+            --hidden-import starlette `
+            --hidden-import starlette.applications `
+            --hidden-import starlette.routing `
+            --hidden-import starlette.middleware `
+            --hidden-import starlette.middleware.cors `
+            --hidden-import starlette.responses `
+            --hidden-import starlette.requests `
+            --hidden-import starlette.staticfiles `
+            --hidden-import starlette.templating `
+            --hidden-import starlette.exceptions `
+            --hidden-import pydantic `
+            --hidden-import pydantic.fields `
+            --hidden-import pydantic_core `
+            --hidden-import pydantic_settings `
+            --hidden-import uvicorn `
             --hidden-import uvicorn.logging `
             --hidden-import uvicorn.loops `
             --hidden-import uvicorn.loops.auto `
             --hidden-import uvicorn.protocols `
             --hidden-import uvicorn.protocols.http `
             --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.http.h11_impl `
+            --hidden-import uvicorn.protocols.http.httptools_impl `
             --hidden-import uvicorn.protocols.websockets `
             --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.protocols.websockets.wsproto_impl `
+            --hidden-import uvicorn.protocols.websockets.websockets_impl `
             --hidden-import uvicorn.lifespan `
             --hidden-import uvicorn.lifespan.on `
+            --hidden-import uvicorn.lifespan.off `
+            --hidden-import sqlalchemy `
             --hidden-import sqlalchemy.dialects.sqlite `
+            --hidden-import sqlalchemy.orm `
+            --hidden-import sqlalchemy.ext.declarative `
+            --hidden-import alembic `
+            --hidden-import ebooklib `
+            --hidden-import ebooklib.epub `
+            --hidden-import pypdf `
+            --hidden-import mobi `
+            --hidden-import multipart `
+            --hidden-import python_multipart `
+            --hidden-import email_validator `
+            --hidden-import anyio `
+            --hidden-import anyio._backends `
+            --hidden-import anyio._backends._asyncio `
+            --collect-submodules fastapi `
+            --collect-submodules starlette `
+            --collect-submodules pydantic `
+            --collect-submodules pydantic_core `
             run.py
         shell: pwsh
       
