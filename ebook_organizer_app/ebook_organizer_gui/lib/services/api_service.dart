@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/ebook.dart';
 import '../models/library_stats.dart';
@@ -24,6 +25,20 @@ class ApiService {
   final AppConfig _config = AppConfig.instance;
 
   String get baseUrl => _config.apiBaseUrl;
+
+  /// Safely decode JSON, returning null for empty or invalid responses
+  dynamic _safeJsonDecode(String body, {String context = 'API response'}) {
+    if (body.isEmpty) {
+      debugPrint('Warning: Empty $context body received');
+      return null;
+    }
+    try {
+      return json.decode(body);
+    } on FormatException catch (e) {
+      debugPrint('Unable to parse JSON message in $context: ${e.message}');
+      return null;
+    }
+  }
 
   /// Make a GET request with proper error handling and timeout
   Future<http.Response> _get(String path, {Duration? timeout}) async {
@@ -297,6 +312,185 @@ class ApiService {
         statusCode: response.statusCode,
         responseBody: response.body,
       );
+    }
+  }
+
+  // ==========================================================================
+  // ORGANIZATION API
+  // ==========================================================================
+
+  /// Get the full taxonomy tree structure
+  Future<Map<String, List<String>>> getTaxonomy() async {
+    final response = await _get('/api/organization/taxonomy');
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data = json.decode(response.body);
+      return data.map((key, value) => 
+        MapEntry(key, List<String>.from(value)));
+    } else {
+      throw ApiException(
+        'Failed to load taxonomy',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// Get organization coverage statistics
+  Future<Map<String, dynamic>> getOrganizationStats({String? sourcePath}) async {
+    String path = '/api/organization/stats';
+    if (sourcePath != null) {
+      path += '?source_path=${Uri.encodeComponent(sourcePath)}';
+    }
+    final response = await _get(path);
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        'Failed to load organization stats',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// Classify a single ebook
+  Future<Map<String, dynamic>> classifyEbook(int ebookId, {bool forceReclassify = false}) async {
+    final response = await _post(
+      '/api/organization/classify/$ebookId',
+      body: {'force_reclassify': forceReclassify},
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else if (response.statusCode == 404) {
+      throw ApiException('Ebook not found', statusCode: 404);
+    } else {
+      throw ApiException(
+        'Failed to classify ebook',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// Batch classify multiple ebooks
+  Future<Map<String, dynamic>> batchClassifyEbooks({
+    List<int>? ebookIds,
+    String? sourcePath,
+    bool forceReclassify = false,
+    int limit = 100,
+  }) async {
+    final response = await _post(
+      '/api/organization/batch-classify',
+      body: {
+        if (ebookIds != null) 'ebook_ids': ebookIds,
+        if (sourcePath != null) 'source_path': sourcePath,
+        'force_reclassify': forceReclassify,
+        'limit': limit,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        'Failed to batch classify ebooks',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// Update an ebook's classification manually
+  Future<Ebook> updateEbookClassification(int ebookId, {String? category, String? subGenre}) async {
+    final uri = Uri.parse('$baseUrl/api/organization/classify/$ebookId');
+    try {
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          if (category != null) 'category': category,
+          if (subGenre != null) 'sub_genre': subGenre,
+        }),
+      ).timeout(_config.requestTimeout);
+
+      if (response.statusCode == 200) {
+        return Ebook.fromJson(json.decode(response.body));
+      } else if (response.statusCode == 400) {
+        final error = json.decode(response.body);
+        throw ApiException(error['detail'] ?? 'Invalid classification');
+      } else {
+        throw ApiException(
+          'Failed to update classification',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        );
+      }
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    }
+  }
+
+  /// Get unclassified ebooks
+  Future<List<Ebook>> getUnclassifiedEbooks({
+    String? sourcePath,
+    int skip = 0,
+    int limit = 100,
+  }) async {
+    final queryParams = {
+      'skip': skip.toString(),
+      'limit': limit.toString(),
+      if (sourcePath != null) 'source_path': sourcePath,
+    };
+
+    final uri = Uri.parse('$baseUrl/api/organization/unclassified')
+        .replace(queryParameters: queryParams);
+    try {
+      final response = await http.get(uri).timeout(_config.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data.map((json) => Ebook.fromJson(json)).toList();
+      } else {
+        throw ApiException(
+          'Failed to load unclassified ebooks',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        );
+      }
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
+    }
+  }
+
+  /// Get classification preview (dry run)
+  Future<Map<String, dynamic>> getClassificationPreview({
+    String? sourcePath,
+    int limit = 100,
+  }) async {
+    final queryParams = {
+      'limit': limit.toString(),
+      if (sourcePath != null) 'source_path': sourcePath,
+    };
+
+    final uri = Uri.parse('$baseUrl/api/organization/preview')
+        .replace(queryParameters: queryParams);
+    try {
+      final response = await http.get(uri).timeout(_config.requestTimeout);
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        throw ApiException(
+          'Failed to load classification preview',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        );
+      }
+    } on TimeoutException {
+      throw ApiException('Request timed out. Please check your connection.');
     }
   }
 }

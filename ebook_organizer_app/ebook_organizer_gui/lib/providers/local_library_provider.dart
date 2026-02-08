@@ -293,6 +293,22 @@ class LocalLibraryProvider with ChangeNotifier {
     }
   }
 
+  /// Update classifications for books by file path
+  Future<int> updateClassifications(Map<String, Map<String, String?>> classifications) async {
+    try {
+      final count = await _service.updateClassifications(classifications);
+      if (count > 0) {
+        await loadEbooks();
+        await loadStats();
+      }
+      return count;
+    } catch (e) {
+      _error = 'Failed to update classifications: $e';
+      notifyListeners();
+      return 0;
+    }
+  }
+
   /// Open ebook file with system default application
   Future<void> openEbook(LocalEbook ebook) async {
     // File operations are not supported on web

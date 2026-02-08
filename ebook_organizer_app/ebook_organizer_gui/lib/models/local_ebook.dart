@@ -16,6 +16,7 @@ class LocalEbook {
   final String? coverPath;
   final String? description;
   final String? category;
+  final String? subGenre;
   final List<String> tags;
 
   LocalEbook({
@@ -31,6 +32,7 @@ class LocalEbook {
     this.coverPath,
     this.description,
     this.category,
+    this.subGenre,
     this.tags = const [],
   });
 
@@ -203,6 +205,7 @@ class LocalEbook {
       coverPath: map['cover_path'],
       description: map['description'],
       category: map['category'],
+      subGenre: map['sub_genre'],
       tags: map['tags'] != null && map['tags'].isNotEmpty 
           ? (map['tags'] as String).split(',') 
           : [],
@@ -224,6 +227,7 @@ class LocalEbook {
       'cover_path': coverPath,
       'description': description,
       'category': category,
+      'sub_genre': subGenre,
       'tags': tags.join(','),
     };
   }
@@ -242,6 +246,7 @@ class LocalEbook {
     String? coverPath,
     String? description,
     String? category,
+    String? subGenre,
     List<String>? tags,
   }) {
     return LocalEbook(
@@ -257,6 +262,7 @@ class LocalEbook {
       coverPath: coverPath ?? this.coverPath,
       description: description ?? this.description,
       category: category ?? this.category,
+      subGenre: subGenre ?? this.subGenre,
       tags: tags ?? this.tags,
     );
   }

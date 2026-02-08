@@ -66,6 +66,10 @@ abstract class LocalLibraryServiceInterface {
   /// Get unique authors in library
   Future<List<String>> getAuthors();
 
+  /// Update classifications for multiple books by file path
+  /// Returns the number of updated records
+  Future<int> updateClassifications(Map<String, Map<String, String?>> classifications);
+
   /// Check if directory scanning is supported (false on web)
   bool get supportsScanDirectory;
 

@@ -40,8 +40,9 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
 
     return await openDatabase(
       dbFilePath,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
     );
   }
 
@@ -61,6 +62,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
         cover_path TEXT,
         description TEXT,
         category TEXT,
+        sub_genre TEXT,
         tags TEXT
       )
     ''');
@@ -79,6 +81,15 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
     await db.execute('CREATE INDEX idx_local_author ON local_ebooks(author)');
     await db.execute('CREATE INDEX idx_local_format ON local_ebooks(file_format)');
     await db.execute('CREATE INDEX idx_local_category ON local_ebooks(category)');
+    await db.execute('CREATE INDEX idx_local_sub_genre ON local_ebooks(sub_genre)');
+  }
+
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add sub_genre column
+      await db.execute('ALTER TABLE local_ebooks ADD COLUMN sub_genre TEXT');
+      await db.execute('CREATE INDEX idx_local_sub_genre ON local_ebooks(sub_genre)');
+    }
   }
 
   @override
@@ -636,6 +647,37 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
       'SELECT DISTINCT author FROM local_ebooks WHERE author IS NOT NULL AND author != "" ORDER BY author'
     );
     return result.map((r) => r['author'] as String).toList();
+  }
+
+  @override
+  Future<int> updateClassifications(Map<String, Map<String, String?>> classifications) async {
+    if (classifications.isEmpty) return 0;
+    
+    final db = await database;
+    int updatedCount = 0;
+    
+    // Use a batch for efficient updates
+    final batch = db.batch();
+    
+    for (final entry in classifications.entries) {
+      final filePath = entry.key;
+      final data = entry.value;
+      
+      batch.update(
+        'local_ebooks',
+        {
+          'category': data['category'],
+          'sub_genre': data['sub_genre'],
+        },
+        where: 'file_path = ?',
+        whereArgs: [filePath],
+      );
+    }
+    
+    final results = await batch.commit();
+    updatedCount = results.where((r) => r is int && r > 0).length;
+    
+    return updatedCount;
   }
 }
 

@@ -459,6 +459,47 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        const SizedBox(height: 4),
+                        // Category/SubGenre badges
+                        if (ebook.category != null || ebook.subGenre != null)
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 2,
+                            children: [
+                              if (ebook.category != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.secondaryContainer,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    ebook.category!,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                    ),
+                                  ),
+                                ),
+                              if (ebook.subGenre != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.tertiaryContainer,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    ebook.subGenre!,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(context).colorScheme.onTertiaryContainer,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         const Spacer(),
                         Text(
                           ebook.displayAuthor,

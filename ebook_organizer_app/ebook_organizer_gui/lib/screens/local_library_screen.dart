@@ -7,6 +7,7 @@ import '../widgets/local_library_widget.dart';
 import '../widgets/local_ebook_list_item.dart';
 import '../widgets/active_filters_bar.dart';
 import '../widgets/skeleton_widgets.dart';
+import '../services/api_service.dart';
 
 /// Full-screen view for browsing local ebooks
 class LocalLibraryView extends StatefulWidget {
@@ -352,6 +353,9 @@ class _Toolbar extends StatelessWidget {
               // Format filter
               _FormatDropdown(provider: provider),
               const SizedBox(width: 8),
+              // Category filter
+              _CategoryDropdown(provider: provider),
+              const SizedBox(width: 8),
               // Author filter
               _AuthorDropdown(provider: provider),
               const SizedBox(width: 8),
@@ -378,6 +382,13 @@ class _Toolbar extends StatelessWidget {
                       )
                     : const Icon(Icons.refresh),
                 tooltip: 'Rescan library',
+              ),
+              const SizedBox(width: 8),
+              // Auto-classify button
+              IconButton(
+                onPressed: () => _showAutoClassifyDialog(context, provider),
+                icon: const Icon(Icons.auto_awesome),
+                tooltip: 'Auto-classify books',
               ),
               const SizedBox(width: 8),
               // Settings button
@@ -469,6 +480,561 @@ class _Toolbar extends StatelessWidget {
       ),
     );
   }
+
+  void _showAutoClassifyDialog(BuildContext context, LocalLibraryProvider provider) async {
+    final result = await showDialog<Map<String, dynamic>?>(
+      context: context,
+      builder: (context) => _AutoClassifyDialog(provider: provider),
+    );
+    
+    // Show snackbar with results and refresh library
+    if (result != null && context.mounted) {
+      final newlyClassified = result['newly_classified'] ?? 0;
+      final failed = result['failed'] ?? 0;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ Classified $newlyClassified books${failed > 0 ? ' ($failed failed)' : ''}',
+          ),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      
+      // Refresh the library to show updated classifications
+      await provider.loadEbooks();
+    }
+  }
+}
+
+/// Dialog for auto-classifying books with tree preview
+class _AutoClassifyDialog extends StatefulWidget {
+  final LocalLibraryProvider provider;
+
+  const _AutoClassifyDialog({required this.provider});
+
+  @override
+  State<_AutoClassifyDialog> createState() => _AutoClassifyDialogState();
+}
+
+class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
+  final ApiService _api = ApiService();
+  bool _loading = true;
+  bool _loadingPreview = false;
+  bool _classifying = false;
+  Map<String, dynamic>? _stats;
+  Map<String, dynamic>? _preview;
+  Map<String, dynamic>? _result;
+  String? _error;
+  Set<String> _expandedCategories = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final stats = await _api.getOrganizationStats(
+        sourcePath: widget.provider.libraryPath,
+      );
+      if (!mounted) return;
+      setState(() {
+        _stats = stats;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadPreview() async {
+    if (!mounted) return;
+    setState(() {
+      _loadingPreview = true;
+      _error = null;
+    });
+    try {
+      final preview = await _api.getClassificationPreview(
+        sourcePath: widget.provider.libraryPath,
+        limit: 100,
+      );
+      if (!mounted) return;
+      setState(() {
+        _preview = preview;
+        _loadingPreview = false;
+        // Expand non-uncategorized categories by default
+        _expandedCategories = {};
+        final tree = preview['tree'] as Map<String, dynamic>? ?? {};
+        for (final cat in tree.keys) {
+          if (cat != '_Uncategorized') {
+            _expandedCategories.add(cat);
+          }
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loadingPreview = false;
+      });
+    }
+  }
+
+  Future<void> _classify() async {
+    if (!mounted) return;
+    setState(() {
+      _classifying = true;
+      _error = null;
+    });
+    try {
+      final result = await _api.batchClassifyEbooks(
+        sourcePath: widget.provider.libraryPath,
+        limit: 100,
+      );
+      if (!mounted) return;
+      
+      // Extract classifications and sync to local SQLite
+      final classifications = result['classifications'] as Map<String, dynamic>? ?? {};
+      if (classifications.isNotEmpty) {
+        final syncData = <String, Map<String, String?>>{};
+        for (final entry in classifications.entries) {
+          final filePath = entry.key;
+          final data = entry.value as Map<String, dynamic>;
+          syncData[filePath] = {
+            'category': data['category'] as String?,
+            'sub_genre': data['sub_genre'] as String?,
+          };
+        }
+        // Sync to local SQLite
+        await widget.provider.updateClassifications(syncData);
+      }
+      
+      setState(() {
+        _result = result;
+        _classifying = false;
+        _preview = null; // Clear preview after applying
+      });
+      // Reload stats to show updated counts in dialog
+      await _loadData();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _classifying = false;
+      });
+    }
+  }
+
+  void _closeWithResult() {
+    Navigator.pop(context, _result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 700, maxHeight: 600),
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.auto_awesome, color: Colors.amber, size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Auto-Classify Books',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                        Text(
+                          '📂 Files stay in place - only metadata is updated',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Content
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? _buildError()
+                      : _preview != null
+                          ? _buildTreePreview()
+                          : _buildStatsView(),
+            ),
+            
+            // Actions
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_result != null)
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '✅ Classified ${_result!['newly_classified']} books',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 12),
+                  if (_preview == null && _stats != null && (_stats!['unclassified_books'] ?? 0) > 0)
+                    FilledButton.tonal(
+                      onPressed: _loadingPreview ? null : _loadPreview,
+                      child: _loadingPreview
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Preview Plan'),
+                    ),
+                  if (_preview != null && _result == null) ...[
+                    TextButton(
+                      onPressed: () => setState(() => _preview = null),
+                      child: const Text('Back'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _classifying ? null : _classify,
+                      icon: _classifying
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.check),
+                      label: Text(_classifying ? 'Applying...' : 'Apply Classification'),
+                    ),
+                  ],
+                  // Show close button after classification completes
+                  if (_result != null)
+                    FilledButton.icon(
+                      onPressed: _closeWithResult,
+                      icon: const Icon(Icons.check_circle),
+                      label: const Text('Done'),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const SizedBox(height: 16),
+            Text('Error: $_error', textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: _loadData, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatsView() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Stats cards
+          Row(
+            children: [
+              _buildStatCard('Total Books', _stats!['total_books']?.toString() ?? '0', Icons.book, Colors.blue),
+              const SizedBox(width: 12),
+              _buildStatCard('Classified', _stats!['classified_books']?.toString() ?? '0', Icons.check_circle, Colors.green),
+              const SizedBox(width: 12),
+              _buildStatCard('Unclassified', _stats!['unclassified_books']?.toString() ?? '0', Icons.pending, Colors.orange),
+            ],
+          ),
+          const SizedBox(height: 24),
+          
+          // Progress bar
+          Text('Organization Progress', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: (_stats!['coverage_percent'] ?? 0) / 100,
+            minHeight: 12,
+            borderRadius: BorderRadius.circular(6),
+            backgroundColor: Colors.grey[200],
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
+          ),
+          const SizedBox(height: 4),
+          Text('${(_stats!['coverage_percent'] ?? 0).toStringAsFixed(1)}% organized'),
+          
+          const Spacer(),
+          
+          // Info text
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, color: Colors.blue),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Click "Preview Plan" to see the proposed organization for unclassified books before applying.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 8),
+            Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+            Text(label, style: TextStyle(color: Colors.grey[600])),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreePreview() {
+    final tree = (_preview?['tree'] as Map<String, dynamic>?) ?? {};
+    final categoryCounts = (_preview?['category_counts'] as Map<String, dynamic>?) ?? {};
+    
+    if (tree.isEmpty) {
+      return const Center(child: Text('No books to classify'));
+    }
+    
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Text(
+            'Proposed Organization (${_preview?['total_to_classify'] ?? 0} books)',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        ...tree.entries.map((catEntry) {
+          final category = catEntry.key;
+          final subGenres = catEntry.value as Map<String, dynamic>;
+          final count = categoryCounts[category] ?? 0;
+          final isExpanded = _expandedCategories.contains(category);
+          
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Category header
+              InkWell(
+                onTap: () => setState(() {
+                  if (isExpanded) {
+                    _expandedCategories.remove(category);
+                  } else {
+                    _expandedCategories.add(category);
+                  }
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Row(
+                    children: [
+                      Icon(
+                        isExpanded ? Icons.expand_more : Icons.chevron_right,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(_getCategoryIcon(category), color: _getCategoryColor(category)),
+                      const SizedBox(width: 8),
+                      Text(
+                        category,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _getCategoryColor(category).withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '$count books',
+                          style: TextStyle(
+                            color: _getCategoryColor(category),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // Sub-genres and books
+              if (isExpanded)
+                ...subGenres.entries.map((sgEntry) {
+                  final subGenre = sgEntry.key;
+                  final books = sgEntry.value as List<dynamic>;
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 32),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.folder_outlined,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                subGenre,
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '(${books.length})',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ...books.take(3).map((book) => Padding(
+                          padding: const EdgeInsets.only(left: 40, right: 16, bottom: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.menu_book,
+                                size: 14,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  book['title'] ?? 'Unknown',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                        if (books.length > 3)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 40, right: 16, bottom: 8),
+                            child: Text(
+                              '... and ${books.length - 3} more',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Fiction': return Icons.auto_stories;
+      case 'Non-Fiction': return Icons.history_edu;
+      case 'Children': return Icons.child_care;
+      case 'Reference': return Icons.menu_book;
+      case '_Uncategorized': return Icons.help_outline;
+      default: return Icons.folder;
+    }
+  }
+
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'Fiction': return Colors.purple;
+      case 'Non-Fiction': return Colors.blue;
+      case 'Children': return Colors.pink;
+      case 'Reference': return Colors.teal;
+      case '_Uncategorized': return Colors.grey;
+      default: return Colors.indigo;
+    }
+  }
 }
 
 class _FormatDropdown extends StatelessWidget {
@@ -513,6 +1079,82 @@ class _SortDropdown extends StatelessWidget {
         DropdownMenuItem(value: 'format', child: Text('Sort by Format')),
       ],
       onChanged: (value) => provider.setSortBy(value ?? 'title'),
+    );
+  }
+}
+
+class _CategoryDropdown extends StatefulWidget {
+  final LocalLibraryProvider provider;
+
+  const _CategoryDropdown({required this.provider});
+
+  @override
+  State<_CategoryDropdown> createState() => _CategoryDropdownState();
+}
+
+class _CategoryDropdownState extends State<_CategoryDropdown> {
+  List<String> _categories = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+    widget.provider.addListener(_onProviderChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.provider.removeListener(_onProviderChanged);
+    super.dispose();
+  }
+
+  void _onProviderChanged() {
+    if (!widget.provider.isScanning && !_loading) {
+      _loadCategories();
+    }
+  }
+
+  Future<void> _loadCategories() async {
+    final categories = await widget.provider.getCategories();
+    if (mounted) {
+      setState(() {
+        _categories = categories;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        width: 100,
+        child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+
+    if (_categories.isEmpty) {
+      return const Text('No categories', style: TextStyle(color: Colors.grey));
+    }
+
+    return DropdownButton<String?>(
+      value: widget.provider.selectedCategory,
+      hint: const Text('All categories'),
+      underline: const SizedBox(),
+      borderRadius: BorderRadius.circular(8),
+      items: [
+        const DropdownMenuItem(value: null, child: Text('All categories')),
+        ..._categories.map(
+          (c) => DropdownMenuItem(
+            value: c,
+            child: Text(
+              c.length > 20 ? '${c.substring(0, 20)}...' : c,
+            ),
+          ),
+        ),
+      ],
+      onChanged: (value) => widget.provider.setCategory(value),
     );
   }
 }

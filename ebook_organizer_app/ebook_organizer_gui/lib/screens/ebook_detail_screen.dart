@@ -89,10 +89,28 @@ class EbookDetailScreen extends StatelessWidget {
                         children: [
                           if (ebook.category != null)
                             Chip(
+                              avatar: Icon(
+                                Icons.category,
+                                size: 16,
+                                color: colorScheme.onSecondaryContainer,
+                              ),
                               label: Text(ebook.category!),
                               backgroundColor: colorScheme.secondaryContainer,
                               labelStyle: TextStyle(
                                 color: colorScheme.onSecondaryContainer,
+                              ),
+                            ),
+                          if (ebook.subGenre != null)
+                            Chip(
+                              avatar: Icon(
+                                Icons.label,
+                                size: 16,
+                                color: colorScheme.onTertiaryContainer,
+                              ),
+                              label: Text(ebook.subGenre!),
+                              backgroundColor: colorScheme.tertiaryContainer,
+                              labelStyle: TextStyle(
+                                color: colorScheme.onTertiaryContainer,
                               ),
                             ),
                           Chip(
@@ -137,6 +155,8 @@ class EbookDetailScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    _buildDetailRow('Category', ebook.category),
+                    _buildDetailRow('Sub-Genre', ebook.subGenre),
                     _buildDetailRow('Publisher', ebook.publisher),
                     _buildDetailRow('Published Date', ebook.publishedDate),
                     _buildDetailRow('ISBN', ebook.isbn),
