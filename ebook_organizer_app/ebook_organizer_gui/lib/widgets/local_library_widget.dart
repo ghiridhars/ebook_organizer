@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/local_library_provider.dart';
@@ -399,92 +400,161 @@ class LocalEbookGrid extends StatelessWidget {
   }
 }
 
-/// Card displaying a single local ebook
-class LocalEbookCard extends StatelessWidget {
+/// Card displaying a single local ebook with hover animations
+class LocalEbookCard extends StatefulWidget {
   final LocalEbook ebook;
 
   const LocalEbookCard({super.key, required this.ebook});
 
   @override
+  State<LocalEbookCard> createState() => _LocalEbookCardState();
+}
+
+class _LocalEbookCardState extends State<LocalEbookCard> {
+  bool _isHovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final provider = context.read<LocalLibraryProvider>();
+    final ebook = widget.ebook;
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _openDetailScreen(context),
-        onDoubleTap: () => provider.openEbook(ebook),
-        onSecondaryTap: () => _showContextMenu(context, provider),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Book cover placeholder
-            Expanded(
-              flex: 3,
-              child: Container(
-                color: _getFormatColor(ebook.fileFormat).withOpacity(0.1),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _getFormatIcon(ebook.fileFormat),
-                        size: 48,
-                        color: _getFormatColor(ebook.fileFormat),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _getFormatColor(ebook.fileFormat),
-                          borderRadius: BorderRadius.circular(4),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.identity()
+          ..scale(_isHovered ? 1.03 : 1.0),
+        transformAlignment: Alignment.center,
+        child: Card(
+          clipBehavior: Clip.antiAlias,
+          elevation: _isHovered ? 8 : 2,
+          shadowColor: _isHovered 
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.3) 
+              : null,
+          child: InkWell(
+            onTap: () => _openDetailScreen(context),
+            onDoubleTap: () => provider.openEbook(ebook),
+            onSecondaryTap: () => _showContextMenu(context, provider),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Book cover
+                Expanded(
+                  flex: 3,
+                  child: _buildCoverSection(ebook),
+                ),
+                // Book info
+                Expanded(
+                  flex: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ebook.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        child: Text(
-                          ebook.fileFormat.toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
+                        const Spacer(),
+                        Text(
+                          ebook.displayAuthor,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          ebook.fileSizeFormatted,
+                          style: TextStyle(
                             fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.outline,
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCoverSection(LocalEbook ebook) {
+    // If cover path exists, try to show the image
+    if (ebook.coverPath != null && ebook.coverPath!.isNotEmpty) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.file(
+            File(ebook.coverPath!),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Fallback to format icon if image fails to load
+              return _buildFormatPlaceholder(ebook);
+            },
+          ),
+          // Format badge overlay
+          Positioned(
+            top: 4,
+            right: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: _getFormatColor(ebook.fileFormat).withOpacity(0.9),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                ebook.fileFormat.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
-            // Book info
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      ebook.title,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const Spacer(),
-                    Text(
-                      ebook.displayAuthor,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      ebook.fileSizeFormatted,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey[500],
-                      ),
-                    ),
-                  ],
+          ),
+        ],
+      );
+    }
+    
+    // Default placeholder with format icon
+    return _buildFormatPlaceholder(ebook);
+  }
+
+  Widget _buildFormatPlaceholder(LocalEbook ebook) {
+    return Container(
+      color: _getFormatColor(ebook.fileFormat).withOpacity(0.1),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _getFormatIcon(ebook.fileFormat),
+              size: 48,
+              color: _getFormatColor(ebook.fileFormat),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: _getFormatColor(ebook.fileFormat),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                ebook.fileFormat.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
@@ -498,7 +568,7 @@ class LocalEbookCard extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => LocalEbookDetailScreen(ebook: ebook),
+        builder: (context) => LocalEbookDetailScreen(ebook: widget.ebook),
       ),
     );
   }
@@ -523,7 +593,7 @@ class LocalEbookCard extends StatelessWidget {
               title: const Text('Open'),
               onTap: () {
                 Navigator.pop(context);
-                provider.openEbook(ebook);
+                provider.openEbook(widget.ebook);
               },
             ),
             ListTile(
@@ -531,7 +601,7 @@ class LocalEbookCard extends StatelessWidget {
               title: const Text('Show in Folder'),
               onTap: () {
                 Navigator.pop(context);
-                provider.openContainingFolder(ebook);
+                provider.openContainingFolder(widget.ebook);
               },
             ),
             ListTile(
@@ -547,7 +617,7 @@ class LocalEbookCard extends StatelessWidget {
               title: const Text('Remove from Index', style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.pop(context);
-                provider.deleteFromIndex(ebook.id!);
+                provider.deleteFromIndex(widget.ebook.id!);
               },
             ),
           ],
@@ -557,6 +627,7 @@ class LocalEbookCard extends StatelessWidget {
   }
 
   void _showEditDialog(BuildContext context, LocalLibraryProvider provider) {
+    final ebook = widget.ebook;
     final titleController = TextEditingController(text: ebook.title);
     final authorController = TextEditingController(text: ebook.author ?? '');
     final categoryController = TextEditingController(text: ebook.category ?? '');

@@ -48,6 +48,9 @@ dependencies:
   
   # Process Management (for launching backend)
   process_run: ^0.14.2
+  
+  # Settings persistence
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:

@@ -1,12 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/local_ebook.dart';
 import '../services/local_library_service.dart';
 import '../utils/platform_utils.dart';
 
+/// View mode for displaying ebooks
+enum ViewMode { grid, list }
+
 /// Provider for managing local ebook library state
 class LocalLibraryProvider with ChangeNotifier {
   final LocalLibraryService _service = LocalLibraryService.instance;
+  static const String _viewModeKey = 'local_library_view_mode';
 
   List<LocalEbook> _ebooks = [];
   LocalLibraryStats? _stats;
@@ -17,6 +22,9 @@ class LocalLibraryProvider with ChangeNotifier {
   String? _libraryPath;
   int _scanProgress = 0;
   int _scanFound = 0;
+  
+  // View mode
+  ViewMode _viewMode = ViewMode.grid;
 
   // Filters
   String? _selectedCategory;
@@ -47,6 +55,27 @@ class LocalLibraryProvider with ChangeNotifier {
   String? get searchQuery => _searchQuery;
   String get sortBy => _sortBy;
   bool get sortAscending => _sortAscending;
+  
+  // View mode
+  ViewMode get viewMode => _viewMode;
+  bool get isGridView => _viewMode == ViewMode.grid;
+  bool get isListView => _viewMode == ViewMode.list;
+  
+  // Active filters check
+  bool get hasActiveFilters => 
+      _selectedCategory != null || 
+      _selectedFormat != null || 
+      _selectedAuthor != null ||
+      (_searchQuery != null && _searchQuery!.isNotEmpty);
+  
+  int get activeFilterCount {
+    int count = 0;
+    if (_selectedCategory != null) count++;
+    if (_selectedFormat != null) count++;
+    if (_selectedAuthor != null) count++;
+    if (_searchQuery != null && _searchQuery!.isNotEmpty) count++;
+    return count;
+  }
 
   /// Get filtered ebooks (the _ebooks list is already filtered by the service)
   List<LocalEbook> get filteredEbooks => _ebooks;
@@ -363,5 +392,65 @@ class LocalLibraryProvider with ChangeNotifier {
   /// Get available authors in library
   Future<List<String>> getAuthors() async {
     return await _service.getAuthors();
+  }
+
+  // View mode methods
+  
+  /// Load saved view mode preference
+  Future<void> loadViewMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_viewModeKey);
+      if (saved == 'list') {
+        _viewMode = ViewMode.list;
+      } else {
+        _viewMode = ViewMode.grid;
+      }
+      notifyListeners();
+    } catch (e) {
+      // Ignore, use default
+    }
+  }
+
+  /// Set view mode and persist
+  Future<void> setViewMode(ViewMode mode) async {
+    if (_viewMode == mode) return;
+    
+    _viewMode = mode;
+    notifyListeners();
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_viewModeKey, mode == ViewMode.list ? 'list' : 'grid');
+    } catch (e) {
+      // Ignore persistence errors
+    }
+  }
+
+  /// Toggle between grid and list view
+  Future<void> toggleViewMode() async {
+    final newMode = _viewMode == ViewMode.grid ? ViewMode.list : ViewMode.grid;
+    await setViewMode(newMode);
+  }
+  
+  // Individual filter clear methods
+  void clearCategory() {
+    _selectedCategory = null;
+    loadEbooks();
+  }
+  
+  void clearFormat() {
+    _selectedFormat = null;
+    loadEbooks();
+  }
+  
+  void clearAuthor() {
+    _selectedAuthor = null;
+    loadEbooks();
+  }
+  
+  void clearSearch() {
+    _searchQuery = null;
+    loadEbooks();
   }
 }

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/ebook_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/local_library_provider.dart';
+import '../providers/theme_provider.dart';
 import '../widgets/ebook_grid.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/filter_chip_bar.dart';
@@ -45,6 +46,16 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Ebook Organizer'),
         elevation: 2,
         actions: [
+          // Theme toggle button
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, _) {
+              return IconButton(
+                icon: Icon(themeProvider.themeModeIcon),
+                tooltip: 'Theme: ${themeProvider.themeModeLabel}',
+                onPressed: () => themeProvider.cycleThemeMode(),
+              );
+            },
+          ),
           // Online/Offline indicator
           Consumer<EbookProvider>(
             builder: (context, provider, _) {
@@ -255,6 +266,47 @@ class SettingsView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // Appearance section
+        Text(
+          'Appearance',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        Consumer<ThemeProvider>(
+          builder: (context, themeProvider, _) {
+            return Card(
+              child: Column(
+                children: [
+                  RadioListTile<ThemeMode>(
+                    title: const Text('System'),
+                    subtitle: const Text('Follow system settings'),
+                    secondary: const Icon(Icons.brightness_auto),
+                    value: ThemeMode.system,
+                    groupValue: themeProvider.themeMode,
+                    onChanged: (value) => themeProvider.setThemeMode(value!),
+                  ),
+                  RadioListTile<ThemeMode>(
+                    title: const Text('Light'),
+                    subtitle: const Text('Always use light theme'),
+                    secondary: const Icon(Icons.light_mode),
+                    value: ThemeMode.light,
+                    groupValue: themeProvider.themeMode,
+                    onChanged: (value) => themeProvider.setThemeMode(value!),
+                  ),
+                  RadioListTile<ThemeMode>(
+                    title: const Text('Dark'),
+                    subtitle: const Text('Always use dark theme'),
+                    secondary: const Icon(Icons.dark_mode),
+                    value: ThemeMode.dark,
+                    groupValue: themeProvider.themeMode,
+                    onChanged: (value) => themeProvider.setThemeMode(value!),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 32),
         Text(
           'Cloud Storage',
           style: Theme.of(context).textTheme.titleLarge,
@@ -302,3 +354,4 @@ class SettingsView extends StatelessWidget {
     );
   }
 }
+

@@ -15,7 +15,7 @@ class BackendMetadataService {
     try {
       final encodedPath = Uri.encodeComponent(filePath);
       final response = await http.get(
-        Uri.parse('$baseUrl/metadata/read?file_path=$encodedPath'),
+        Uri.parse('$baseUrl/api/metadata/read?file_path=$encodedPath'),
       ).timeout(const Duration(seconds: 30));
       
       if (response.statusCode == 200) {
@@ -58,7 +58,7 @@ class BackendMetadataService {
       if (subjects != null) body['subjects'] = subjects;
       
       final response = await http.put(
-        Uri.parse('$baseUrl/metadata/write?file_path=$encodedPath'),
+        Uri.parse('$baseUrl/api/metadata/write?file_path=$encodedPath'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 30));
@@ -78,7 +78,7 @@ class BackendMetadataService {
   Future<List<Map<String, dynamic>>> getSupportedFormats() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/metadata/supported-formats'),
+        Uri.parse('$baseUrl/api/metadata/supported-formats'),
       ).timeout(const Duration(seconds: 10));
       
       if (response.statusCode == 200) {
@@ -96,7 +96,7 @@ class BackendMetadataService {
   Future<bool> isBackendAvailable() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/metadata/supported-formats'),
+        Uri.parse('$baseUrl/api/metadata/supported-formats'),
       ).timeout(const Duration(seconds: 5));
       return response.statusCode == 200;
     } catch (e) {

@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from contextlib import asynccontextmanager
 
-from app.routes import ebooks, cloud, metadata, sync
+from app.routes import ebooks, cloud, metadata, sync, conversion
 from app.services.database import init_db
 from app.logging_config import logger
 from app.middleware import (
@@ -65,6 +65,7 @@ app.include_router(ebooks.router, prefix="/api/ebooks", tags=["Ebooks"])
 app.include_router(cloud.router, prefix="/api/cloud", tags=["Cloud Storage"])
 app.include_router(metadata.router, prefix="/api/metadata", tags=["Metadata"])
 app.include_router(sync.router, prefix="/api/sync", tags=["Synchronization"])
+app.include_router(conversion.router, prefix="/api/conversion", tags=["Conversion"])
 
 
 @app.get("/")

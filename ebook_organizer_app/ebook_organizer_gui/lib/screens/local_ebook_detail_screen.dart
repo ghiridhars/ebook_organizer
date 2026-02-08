@@ -6,6 +6,7 @@ import '../models/local_ebook.dart';
 import '../providers/local_library_provider.dart';
 import '../services/epub_metadata_service.dart';
 import '../services/backend_metadata_service.dart';
+import '../services/conversion_service.dart';
 import '../utils/platform_utils.dart' as platform;
 
 /// Detail screen for viewing and editing local ebook information
@@ -56,6 +57,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final provider = context.read<LocalLibraryProvider>();
 
     return Scaffold(
       appBar: AppBar(
@@ -81,7 +83,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.only(left: 24, right: 24, top: 24, bottom: 100),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -89,7 +91,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
             _buildHeader(colorScheme),
             const SizedBox(height: 32),
 
-            // Quick actions
+            // Legacy Quick actions card (for reference before bottom bar)
             if (!_isEditing) ...[
               _buildQuickActions(),
               const SizedBox(height: 32),
@@ -107,6 +109,120 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
               // Danger zone
               _buildDangerZone(colorScheme),
             ],
+          ],
+        ),
+      ),
+      // Floating quick actions bar at bottom
+      bottomNavigationBar: _isEditing 
+          ? null 
+          : _buildFloatingActionsBar(context, provider, colorScheme),
+    );
+  }
+
+  Widget _buildFloatingActionsBar(
+    BuildContext context, 
+    LocalLibraryProvider provider,
+    ColorScheme colorScheme,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildActionButton(
+                icon: Icons.open_in_new,
+                label: 'Open',
+                color: colorScheme.primary,
+                filled: true,
+                onTap: () => provider.openEbook(_ebook),
+              ),
+              _buildActionButton(
+                icon: Icons.edit,
+                label: 'Edit',
+                color: colorScheme.secondary,
+                onTap: () => setState(() => _isEditing = true),
+              ),
+              // Convert to EPUB button - only for MOBI/AZW files
+              if (conversionService.canConvertToEpub(_ebook.fileFormat))
+                _buildActionButton(
+                  icon: Icons.transform,
+                  label: 'EPUB',
+                  color: Colors.green,
+                  onTap: _convertToEpub,
+                ),
+              _buildActionButton(
+                icon: Icons.folder_open,
+                label: 'Folder',
+                color: colorScheme.tertiary,
+                onTap: () => provider.openContainingFolder(_ebook),
+              ),
+              _buildActionButton(
+                icon: Icons.copy,
+                label: 'Copy',
+                color: colorScheme.outline,
+                onTap: _copyPath,
+              ),
+              _buildActionButton(
+                icon: Icons.delete_outline,
+                label: 'Remove',
+                color: Colors.red,
+                onTap: _removeFromIndex,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+    bool filled = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: filled ? color : color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                size: 22,
+                color: filled ? Colors.white : color,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ),
@@ -669,6 +785,123 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Path copied to clipboard')),
     );
+  }
+
+  Future<void> _convertToEpub() async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final provider = context.read<LocalLibraryProvider>();
+    
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Convert to EPUB?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Convert "${_ebook.title}" to EPUB format?'),
+            const SizedBox(height: 12),
+            const Text(
+              'The EPUB file will be created in the same folder as the original file.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Convert'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true || !mounted) return;
+    
+    // Show progress indicator
+    scaffoldMessenger.showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 16),
+            Text('Converting to EPUB...'),
+          ],
+        ),
+        duration: Duration(minutes: 5),
+      ),
+    );
+    
+    // Call conversion service
+    final result = await conversionService.convertMobiToEpub(_ebook.filePath);
+    
+    if (!mounted) return;
+    scaffoldMessenger.hideCurrentSnackBar();
+    
+    if (result['success'] == true) {
+      final outputPath = result['output_path'] as String?;
+      
+      // Ask if user wants to add to library
+      final addToLibrary = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          icon: const Icon(Icons.check_circle, color: Colors.green, size: 48),
+          title: const Text('Conversion Complete!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('EPUB file created successfully.'),
+              if (outputPath != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  outputPath.split(RegExp(r'[/\\]')).last,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+              const SizedBox(height: 16),
+              const Text('Would you like to add the new EPUB to your library?'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('No'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add to Library'),
+            ),
+          ],
+        ),
+      );
+      
+      if (addToLibrary == true && outputPath != null && mounted) {
+        // Trigger a rescan to pick up the new file
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('EPUB added. Rescan your library to see it.')),
+        );
+      }
+    } else {
+      // Show error
+      final error = result['error'] ?? 'Unknown error';
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Conversion failed: $error'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   void _removeFromIndex() {

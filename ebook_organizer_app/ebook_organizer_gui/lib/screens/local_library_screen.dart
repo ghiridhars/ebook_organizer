@@ -4,6 +4,9 @@ import 'package:provider/provider.dart';
 import '../providers/local_library_provider.dart';
 import '../models/local_ebook.dart';
 import '../widgets/local_library_widget.dart';
+import '../widgets/local_ebook_list_item.dart';
+import '../widgets/active_filters_bar.dart';
+import '../widgets/skeleton_widgets.dart';
 
 /// Full-screen view for browsing local ebooks
 class LocalLibraryView extends StatefulWidget {
@@ -43,16 +46,69 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
               provider: provider,
               searchController: _searchController,
             ),
+            // Active filters bar
+            const ActiveFiltersBar(),
             // Content
             Expanded(
-              child: provider.isScanning && provider.filteredEbooks.isEmpty
-                  ? _ScanningView(provider: provider)
-                  : LocalEbookGrid(ebooks: provider.filteredEbooks),
+              child: _buildContent(provider),
             ),
           ],
         );
       },
     );
+  }
+  
+  Widget _buildContent(LocalLibraryProvider provider) {
+    // Show skeleton loading during initial load
+    if (provider.isLoading && provider.filteredEbooks.isEmpty) {
+      return provider.isGridView 
+          ? const SkeletonBookGrid() 
+          : const SkeletonBookList();
+    }
+    
+    // Show scanning progress with skeleton
+    if (provider.isScanning && provider.filteredEbooks.isEmpty) {
+      return Stack(
+        children: [
+          provider.isGridView 
+              ? const SkeletonBookGrid() 
+              : const SkeletonBookList(),
+          Center(
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Scanning library...',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Found ${provider.scanFound} ebooks (${provider.scanProgress} files scanned)',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    
+    // Show grid or list view based on preference
+    if (provider.isGridView) {
+      return LocalEbookGrid(ebooks: provider.filteredEbooks);
+    } else {
+      return LocalEbookList(
+        ebooks: provider.filteredEbooks,
+        onEbookDoubleTap: (ebook) => provider.openEbook(ebook),
+      );
+    }
   }
 }
 
@@ -301,6 +357,15 @@ class _Toolbar extends StatelessWidget {
               const SizedBox(width: 8),
               // Sort dropdown
               _SortDropdown(provider: provider),
+              const SizedBox(width: 8),
+              // View mode toggle
+              IconButton(
+                onPressed: () => provider.toggleViewMode(),
+                icon: Icon(
+                  provider.isGridView ? Icons.view_list : Icons.grid_view,
+                ),
+                tooltip: provider.isGridView ? 'Switch to list view' : 'Switch to grid view',
+              ),
               const SizedBox(width: 8),
               // Scan button
               IconButton.filled(
