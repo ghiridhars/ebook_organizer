@@ -36,6 +36,8 @@ class BatchClassifyRequest(BaseModel):
     source_path: Optional[str] = None
     force_reclassify: bool = False
     limit: int = 100
+    # Manual overrides: {ebook_id: {category, sub_genre}}
+    overrides: Optional[Dict[str, Dict[str, str]]] = None
 
 
 class UpdateClassificationRequest(BaseModel):
@@ -169,7 +171,8 @@ async def batch_classify(
         ebook_ids=request.ebook_ids,
         source_path=request.source_path,
         force_reclassify=request.force_reclassify,
-        limit=request.limit
+        limit=request.limit,
+        overrides=request.overrides
     )
     return BatchClassificationResponse(
         total_processed=result.total_processed,

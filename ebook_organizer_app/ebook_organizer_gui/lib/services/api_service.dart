@@ -381,15 +381,24 @@ class ApiService {
     String? sourcePath,
     bool forceReclassify = false,
     int limit = 100,
+    Map<int, Map<String, String>>? overrides,
   }) async {
+    final Map<String, dynamic> body = {
+      if (ebookIds != null) 'ebook_ids': ebookIds,
+      if (sourcePath != null) 'source_path': sourcePath,
+      'force_reclassify': forceReclassify,
+      'limit': limit,
+    };
+
+    if (overrides != null && overrides.isNotEmpty) {
+      body['overrides'] = overrides.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }
+
     final response = await _post(
       '/api/organization/batch-classify',
-      body: {
-        if (ebookIds != null) 'ebook_ids': ebookIds,
-        if (sourcePath != null) 'source_path': sourcePath,
-        'force_reclassify': forceReclassify,
-        'limit': limit,
-      },
+      body: body,
     );
 
     if (response.statusCode == 200) {

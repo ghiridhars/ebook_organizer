@@ -529,6 +529,11 @@ class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
   Map<String, dynamic>? _result;
   String? _error;
   Set<String> _expandedCategories = {};
+  
+  // Phase 3: Manual override state
+  Map<String, List<String>> _taxonomy = {}; // category -> [sub_genres]
+  // Map of book_id -> {category, sub_genre} for overrides
+  Map<int, Map<String, String>> _overrides = {};
 
   @override
   void initState() {
@@ -543,12 +548,15 @@ class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
       _error = null;
     });
     try {
-      final stats = await _api.getOrganizationStats(
-        sourcePath: widget.provider.libraryPath,
-      );
+      // Load stats and taxonomy in parallel
+      final results = await Future.wait([
+        _api.getOrganizationStats(sourcePath: widget.provider.libraryPath),
+        _api.getTaxonomy(),
+      ]);
       if (!mounted) return;
       setState(() {
-        _stats = stats;
+        _stats = results[0] as Map<String, dynamic>;
+        _taxonomy = results[1] as Map<String, List<String>>;
         _loading = false;
       });
     } catch (e) {
@@ -603,6 +611,7 @@ class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
       final result = await _api.batchClassifyEbooks(
         sourcePath: widget.provider.libraryPath,
         limit: 100,
+        overrides: _overrides.isEmpty ? null : _overrides,
       );
       if (!mounted) return;
       
@@ -860,24 +869,208 @@ class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
     );
   }
 
+  /// Build the effective tree by applying overrides to the original preview data
+  Map<String, dynamic> _buildEffectiveTree() {
+    final originalTree = (_preview?['tree'] as Map<String, dynamic>?) ?? {};
+    if (_overrides.isEmpty) return originalTree;
+
+    // Flatten all books with their current placement
+    final allBooks = <Map<String, dynamic>>[];
+    for (final catEntry in originalTree.entries) {
+      final subGenres = catEntry.value as Map<String, dynamic>;
+      for (final sgEntry in subGenres.entries) {
+        final books = sgEntry.value as List<dynamic>;
+        for (final book in books) {
+          final bookMap = Map<String, dynamic>.from(book as Map);
+          final bookId = bookMap['id'] as int?;
+          if (bookId != null && _overrides.containsKey(bookId)) {
+            // Override applied
+            bookMap['_override_category'] = _overrides[bookId]!['category'];
+            bookMap['_override_sub_genre'] = _overrides[bookId]!['sub_genre'];
+          } else {
+            bookMap['_override_category'] = catEntry.key;
+            bookMap['_override_sub_genre'] = sgEntry.key;
+          }
+          allBooks.add(bookMap);
+        }
+      }
+    }
+
+    // Rebuild tree from overridden placements
+    final newTree = <String, dynamic>{};
+    for (final book in allBooks) {
+      final cat = book['_override_category'] as String;
+      final sg = book['_override_sub_genre'] as String;
+      newTree.putIfAbsent(cat, () => <String, dynamic>{});
+      (newTree[cat] as Map<String, dynamic>).putIfAbsent(sg, () => <dynamic>[]);
+      ((newTree[cat] as Map<String, dynamic>)[sg] as List<dynamic>).add(book);
+    }
+    return newTree;
+  }
+
+  void _applyOverride(int bookId, String category, String subGenre) {
+    setState(() {
+      _overrides[bookId] = {'category': category, 'sub_genre': subGenre};
+    });
+  }
+
+  void _showEditDialog(BuildContext context, Map<String, dynamic> book, String currentCategory, String currentSubGenre) {
+    String selectedCategory = currentCategory;
+    String selectedSubGenre = currentSubGenre;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final subGenres = _taxonomy[selectedCategory] ?? [];
+            if (!subGenres.contains(selectedSubGenre)) {
+              selectedSubGenre = subGenres.isNotEmpty ? subGenres.first : '';
+            }
+            return AlertDialog(
+              title: Text(
+                book['title'] ?? 'Unknown',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Category', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    value: selectedCategory,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      isDense: true,
+                    ),
+                    items: _taxonomy.keys.map((cat) => DropdownMenuItem(
+                      value: cat,
+                      child: Text(cat),
+                    )).toList(),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setDialogState(() {
+                        selectedCategory = val;
+                        final newSubGenres = _taxonomy[val] ?? [];
+                        selectedSubGenre = newSubGenres.isNotEmpty ? newSubGenres.first : '';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Sub-Genre', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    value: selectedSubGenre.isNotEmpty ? selectedSubGenre : null,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      isDense: true,
+                    ),
+                    items: (subGenres).map((sg) => DropdownMenuItem(
+                      value: sg,
+                      child: Text(sg),
+                    )).toList(),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setDialogState(() => selectedSubGenre = val);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final bookId = book['id'] as int?;
+                    if (bookId != null && selectedSubGenre.isNotEmpty) {
+                      _applyOverride(bookId, selectedCategory, selectedSubGenre);
+                    }
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildTreePreview() {
-    final tree = (_preview?['tree'] as Map<String, dynamic>?) ?? {};
-    final categoryCounts = (_preview?['category_counts'] as Map<String, dynamic>?) ?? {};
+    final tree = _buildEffectiveTree();
+    final categoryCounts = <String, int>{};
+    for (final catEntry in tree.entries) {
+      int count = 0;
+      for (final sgEntry in (catEntry.value as Map<String, dynamic>).values) {
+        count += (sgEntry as List<dynamic>).length;
+      }
+      categoryCounts[catEntry.key] = count;
+    }
     
     if (tree.isEmpty) {
       return const Center(child: Text('No books to classify'));
     }
+
+    final hasOverrides = _overrides.isNotEmpty;
     
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Text(
-            'Proposed Organization (${_preview?['total_to_classify'] ?? 0} books)',
-            style: Theme.of(context).textTheme.titleMedium,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Proposed Organization (${_preview?['total_to_classify'] ?? 0} books)',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (hasOverrides)
+                TextButton.icon(
+                  onPressed: () => setState(() => _overrides.clear()),
+                  icon: const Icon(Icons.undo, size: 16),
+                  label: Text('Reset ${_overrides.length} override${_overrides.length == 1 ? '' : 's'}'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.orange,
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
           ),
         ),
+        if (hasOverrides)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.edit_note, color: Colors.orange, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_overrides.length} book${_overrides.length == 1 ? '' : 's'} manually reassigned',
+                    style: const TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ...tree.entries.map((catEntry) {
           final category = catEntry.key;
           final subGenres = catEntry.value as Map<String, dynamic>;
@@ -941,76 +1134,167 @@ class _AutoClassifyDialogState extends State<_AutoClassifyDialog> {
                   final subGenre = sgEntry.key;
                   final books = sgEntry.value as List<dynamic>;
                   
-                  return Padding(
-                    padding: const EdgeInsets.only(left: 32),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.folder_outlined,
-                                size: 18,
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                  return DragTarget<Map<String, dynamic>>(
+                    onAcceptWithDetails: (details) {
+                      final book = details.data;
+                      final bookId = book['id'] as int?;
+                      if (bookId != null) {
+                        _applyOverride(bookId, category, subGenre);
+                      }
+                    },
+                    builder: (context, candidateData, rejectedData) {
+                      final isDropTarget = candidateData.isNotEmpty;
+                      return Padding(
+                        padding: const EdgeInsets.only(left: 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isDropTarget
+                                    ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                                    : null,
+                                border: isDropTarget
+                                    ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
+                                    : null,
+                                borderRadius: isDropTarget ? BorderRadius.circular(8) : null,
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                subGenre,
-                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '(${books.length})',
-                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        ...books.take(3).map((book) => Padding(
-                          padding: const EdgeInsets.only(left: 40, right: 16, bottom: 4),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.menu_book,
-                                size: 14,
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  book['title'] ?? 'Unknown',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isDropTarget ? Icons.folder_open : Icons.folder_outlined,
+                                    size: 18,
+                                    color: isDropTarget
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                                   ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        )),
-                        if (books.length > 3)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 40, right: 16, bottom: 8),
-                            child: Text(
-                              '... and ${books.length - 3} more',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                fontStyle: FontStyle.italic,
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    subGenre,
+                                    style: TextStyle(
+                                      color: isDropTarget
+                                          ? Theme.of(context).colorScheme.primary
+                                          : Theme.of(context).colorScheme.onSurface,
+                                      fontWeight: isDropTarget ? FontWeight.bold : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '(${books.length})',
+                                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
+                                  ),
+                                  if (isDropTarget) ...[
+                                    const Spacer(),
+                                    Icon(Icons.add_circle, size: 18, color: Theme.of(context).colorScheme.primary),
+                                  ],
+                                ],
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                            ...books.map((book) {
+                              final bookMap = book as Map<String, dynamic>;
+                              final bookId = bookMap['id'] as int?;
+                              final isOverridden = bookId != null && _overrides.containsKey(bookId);
+                              
+                              return Draggable<Map<String, dynamic>>(
+                                data: bookMap,
+                                feedback: Material(
+                                  elevation: 6,
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.menu_book, size: 14),
+                                        const SizedBox(width: 8),
+                                        ConstrainedBox(
+                                          constraints: const BoxConstraints(maxWidth: 250),
+                                          child: Text(
+                                            bookMap['title'] ?? 'Unknown',
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontSize: 12),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                childWhenDragging: Opacity(
+                                  opacity: 0.3,
+                                  child: _buildBookRow(bookMap, category, subGenre, isOverridden),
+                                ),
+                                child: _buildBookRow(bookMap, category, subGenre, isOverridden),
+                              );
+                            }),
+                          ],
+                        ),
+                      );
+                    },
                   );
                 }),
             ],
           );
         }),
       ],
+    );
+  }
+
+  Widget _buildBookRow(Map<String, dynamic> book, String category, String subGenre, bool isOverridden) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 40, right: 8, bottom: 4),
+      child: Row(
+        children: [
+          Icon(
+            Icons.drag_indicator,
+            size: 14,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+          ),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.menu_book,
+            size: 14,
+            color: isOverridden
+                ? Colors.orange
+                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              book['title'] ?? 'Unknown',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: isOverridden
+                    ? Colors.orange.shade700
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                fontWeight: isOverridden ? FontWeight.w600 : null,
+              ),
+            ),
+          ),
+          if (isOverridden)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(Icons.edit, size: 12, color: Colors.orange.shade600),
+            ),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _showEditDialog(context, book, category, subGenre),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.swap_horiz,
+                size: 16,
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

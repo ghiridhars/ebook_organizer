@@ -199,7 +199,8 @@ def batch_classify_ebooks(
     ebook_ids: Optional[List[int]] = None,
     source_path: Optional[str] = None,
     force_reclassify: bool = False,
-    limit: int = 100
+    limit: int = 100,
+    overrides: Optional[Dict[str, Dict[str, str]]] = None
 ) -> BatchClassificationResult:
     """
     Classify multiple ebooks in batch.
@@ -210,15 +211,68 @@ def batch_classify_ebooks(
         source_path: Filter to specific source path
         force_reclassify: If True, reclassify even if already classified
         limit: Maximum number of books to process in one batch
+        overrides: Manual overrides dictionary {ebook_id: {category, sub_genre}}
         
     Returns:
         BatchClassificationResult with counts and per-book results
     """
     result = BatchClassificationResult()
+    overridden_ids = set()
     
+    # 1. Apply overrides first
+    if overrides:
+        for str_id, data in overrides.items():
+            try:
+                ebook_id = int(str_id)
+                ebook = db.query(Ebook).filter(Ebook.id == ebook_id).first()
+                if ebook:
+                    old_cat = ebook.category
+                    old_sub = ebook.sub_genre
+                    
+                    new_cat = data.get('category')
+                    new_sub = data.get('sub_genre')
+                    
+                    # Update if changed
+                    if ebook.category != new_cat or ebook.sub_genre != new_sub:
+                        ebook.category = new_cat
+                        ebook.sub_genre = new_sub
+                        result.newly_classified += 1
+                        was_updated = True
+                    else:
+                        result.already_classified += 1
+                        was_updated = False
+                        
+                    result.total_processed += 1
+                    overridden_ids.add(ebook_id)
+                    
+                    # Store file path -> classification mapping for local sync
+                    if ebook.cloud_file_path:
+                        result.file_classifications[ebook.cloud_file_path] = {
+                            'category': ebook.category,
+                            'sub_genre': ebook.sub_genre
+                        }
+                        
+                    # Add result entry
+                    result.results[ebook_id] = ClassificationResult(
+                        category=ebook.category,
+                        sub_genre=ebook.sub_genre,
+                        author=ebook.author,
+                        metadata_source="manual_override",
+                        was_updated=was_updated
+                    )
+            except Exception:
+                result.failed += 1
+        
+        # Commit manual changes
+        db.commit()
+    
+    # 2. Proceed with AI classification for others
     if ebook_ids:
         # Classify specific ebooks
-        ebooks = db.query(Ebook).filter(Ebook.id.in_(ebook_ids)).limit(limit).all()
+        query = db.query(Ebook).filter(Ebook.id.in_(ebook_ids))
+        if overridden_ids:
+             query = query.filter(Ebook.id.notin_(overridden_ids))
+        ebooks = query.limit(limit).all()
     else:
         # Classify unclassified ebooks
         query = db.query(Ebook)
@@ -232,6 +286,10 @@ def batch_classify_ebooks(
                 (Ebook.category.is_(None)) | (Ebook.category == '') |
                 (Ebook.sub_genre.is_(None)) | (Ebook.sub_genre == '')
             )
+            
+        # Exclude already overridden books (though unclassified filter might already catch them)
+        if overridden_ids:
+            query = query.filter(Ebook.id.notin_(overridden_ids))
         
         ebooks = query.limit(limit).all()
     
