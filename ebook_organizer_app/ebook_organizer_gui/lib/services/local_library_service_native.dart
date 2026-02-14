@@ -679,6 +679,37 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
     
     return updatedCount;
   }
+
+  @override
+  Future<int> updateFilePaths(Map<String, String> pathMappings) async {
+    if (pathMappings.isEmpty) return 0;
+
+    final db = await database;
+    int updatedCount = 0;
+
+    final batch = db.batch();
+
+    for (final entry in pathMappings.entries) {
+      final oldPath = entry.key;
+      final newPath = entry.value;
+      final newFileName = newPath.split(RegExp(r'[/\\]')).last;
+
+      batch.update(
+        'local_ebooks',
+        {
+          'file_path': newPath,
+          'file_name': newFileName,
+        },
+        where: 'file_path = ?',
+        whereArgs: [oldPath],
+      );
+    }
+
+    final results = await batch.commit();
+    updatedCount = results.where((r) => r is int && r > 0).length;
+
+    return updatedCount;
+  }
 }
 
 // Re-export as the default service name for backward compatibility

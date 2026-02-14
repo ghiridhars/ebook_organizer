@@ -70,7 +70,7 @@ class ConsoleFormatter(logging.Formatter):
         if hasattr(record, "method") and hasattr(record, "path"):
             msg = f"{color}[{timestamp}] {record.levelname:8}{self.RESET} {record.method} {record.path}"
             if hasattr(record, "status_code"):
-                msg += f" → {record.status_code}"
+                msg += f" -> {record.status_code}"
             if hasattr(record, "duration_ms"):
                 msg += f" ({record.duration_ms:.1f}ms)"
         

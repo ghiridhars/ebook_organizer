@@ -309,6 +309,29 @@ class LocalLibraryProvider with ChangeNotifier {
     }
   }
 
+  /// Update file paths after reorganization (move operation)
+  Future<int> updateFilePaths(Map<String, String> pathMappings) async {
+    try {
+      final count = await _service.updateFilePaths(pathMappings);
+      if (count > 0) {
+        await loadEbooks();
+        await loadStats();
+      }
+      return count;
+    } catch (e) {
+      _error = 'Failed to update file paths: $e';
+      notifyListeners();
+      return 0;
+    }
+  }
+
+  /// Update library path to a new destination (after reorganization)
+  Future<void> updateLibraryPath(String newPath) async {
+    _libraryPath = newPath;
+    await _service.setLibraryPath(newPath);
+    notifyListeners();
+  }
+
   /// Open ebook file with system default application
   Future<void> openEbook(LocalEbook ebook) async {
     // File operations are not supported on web

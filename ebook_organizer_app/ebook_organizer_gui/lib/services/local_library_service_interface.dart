@@ -70,6 +70,11 @@ abstract class LocalLibraryServiceInterface {
   /// Returns the number of updated records
   Future<int> updateClassifications(Map<String, Map<String, String?>> classifications);
 
+  /// Update file paths for books after reorganization (move operation)
+  /// Maps old file_path -> new file_path
+  /// Returns the number of updated records
+  Future<int> updateFilePaths(Map<String, String> pathMappings);
+
   /// Check if directory scanning is supported (false on web)
   bool get supportsScanDirectory;
 

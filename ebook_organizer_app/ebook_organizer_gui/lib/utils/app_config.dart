@@ -35,6 +35,9 @@ class AppConfig {
   /// Health check timeout (shorter for quick connectivity checks)
   Duration get healthCheckTimeout => const Duration(seconds: 3);
 
+  /// Classification timeout (longer for batch operations that hit external APIs)
+  Duration get classificationTimeout => const Duration(seconds: 120);
+
   /// Configure the API endpoint
   /// Call this before making any API requests if you need to change defaults
   void configureApi({

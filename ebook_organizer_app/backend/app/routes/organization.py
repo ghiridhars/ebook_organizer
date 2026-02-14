@@ -16,6 +16,10 @@ from app.services.organization_service import (
     get_books_by_category,
     preview_classification
 )
+from app.services.file_organizer_service import (
+    generate_reorganize_plan,
+    execute_reorganization,
+)
 from app.models import EbookResponse
 
 router = APIRouter()
@@ -73,6 +77,54 @@ class OrganizationStatsResponse(BaseModel):
     by_category: Dict[str, int]
     by_sub_genre: Dict[str, int]
     coverage_percent: float
+
+
+class ReorganizePreviewRequest(BaseModel):
+    """Request for reorganization preview"""
+    destination: str
+    source_path: Optional[str] = None
+    include_unclassified: bool = False
+    operation: str = "move"
+
+
+class PlannedMoveResponse(BaseModel):
+    """A single planned file move"""
+    ebook_id: int
+    source_path: str
+    target_path: str
+    title: str
+    author: str
+    category: str
+    sub_genre: str
+
+
+class ReorganizePreviewResponse(BaseModel):
+    """Response for reorganization preview"""
+    destination: str
+    operation: str
+    total_files: int
+    classified_files: int
+    unclassified_files: int
+    collisions: int
+    planned_moves: List[PlannedMoveResponse]
+
+
+class ReorganizeRequest(BaseModel):
+    """Request to execute reorganization"""
+    destination: str
+    source_path: Optional[str] = None
+    include_unclassified: bool = False
+    operation: str = "move"
+
+
+class ReorganizeResponse(BaseModel):
+    """Response after reorganization"""
+    total_processed: int
+    succeeded: int
+    skipped: int
+    failed: int
+    errors: List[str] = []
+    path_mappings: Dict[str, str] = {}
 
 
 # =============================================================================
@@ -247,3 +299,77 @@ async def get_unclassified(
     
     ebooks = query.offset(skip).limit(limit).all()
     return [EbookResponse.model_validate(ebook) for ebook in ebooks]
+
+
+@router.post("/reorganize-preview", response_model=ReorganizePreviewResponse)
+async def reorganize_preview(
+    request: ReorganizePreviewRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview file reorganization without executing.
+
+    Returns a list of planned source -> target path mappings
+    based on the Category/SubGenre/Author folder structure.
+    """
+    try:
+        plan = generate_reorganize_plan(
+            db,
+            destination=request.destination,
+            source_path=request.source_path,
+            include_unclassified=request.include_unclassified,
+            operation=request.operation,
+        )
+        return ReorganizePreviewResponse(
+            destination=plan.destination,
+            operation=plan.operation,
+            total_files=plan.total_files,
+            classified_files=plan.classified_files,
+            unclassified_files=plan.unclassified_files,
+            collisions=plan.collisions,
+            planned_moves=[
+                PlannedMoveResponse(
+                    ebook_id=m.ebook_id,
+                    source_path=m.source_path,
+                    target_path=m.target_path,
+                    title=m.title,
+                    author=m.author,
+                    category=m.category,
+                    sub_genre=m.sub_genre,
+                )
+                for m in plan.planned_moves
+            ],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/reorganize", response_model=ReorganizeResponse)
+async def reorganize(
+    request: ReorganizeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute file reorganization (move or copy).
+
+    Moves/copies files into Category/SubGenre/Author folder structure
+    and updates database paths for moved files.
+    """
+    try:
+        result = execute_reorganization(
+            db,
+            destination=request.destination,
+            source_path=request.source_path,
+            include_unclassified=request.include_unclassified,
+            operation=request.operation,
+        )
+        return ReorganizeResponse(
+            total_processed=result.total_processed,
+            succeeded=result.succeeded,
+            skipped=result.skipped,
+            failed=result.failed,
+            errors=result.errors,
+            path_mappings=result.path_mappings,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

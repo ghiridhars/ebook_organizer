@@ -360,6 +360,7 @@ class ApiService {
     final response = await _post(
       '/api/organization/classify/$ebookId',
       body: {'force_reclassify': forceReclassify},
+      timeout: _config.classificationTimeout,
     );
 
     if (response.statusCode == 200) {
@@ -399,6 +400,7 @@ class ApiService {
     final response = await _post(
       '/api/organization/batch-classify',
       body: body,
+      timeout: _config.classificationTimeout,
     );
 
     if (response.statusCode == 200) {
@@ -423,7 +425,7 @@ class ApiService {
           if (category != null) 'category': category,
           if (subGenre != null) 'sub_genre': subGenre,
         }),
-      ).timeout(_config.requestTimeout);
+      ).timeout(_config.classificationTimeout);
 
       if (response.statusCode == 200) {
         return Ebook.fromJson(json.decode(response.body));
@@ -487,7 +489,7 @@ class ApiService {
     final uri = Uri.parse('$baseUrl/api/organization/preview')
         .replace(queryParameters: queryParams);
     try {
-      final response = await http.get(uri).timeout(_config.requestTimeout);
+      final response = await http.get(uri).timeout(_config.classificationTimeout);
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
@@ -500,6 +502,68 @@ class ApiService {
       }
     } on TimeoutException {
       throw ApiException('Request timed out. Please check your connection.');
+    }
+  }
+
+  // ===========================================================================
+  // REORGANIZATION API
+  // ===========================================================================
+
+  /// Get reorganization preview (planned file moves/copies)
+  Future<Map<String, dynamic>> getReorganizePreview({
+    required String destination,
+    String? sourcePath,
+    bool includeUnclassified = false,
+    String operation = 'move',
+  }) async {
+    final response = await _post(
+      '/api/organization/reorganize-preview',
+      body: {
+        'destination': destination,
+        if (sourcePath != null) 'source_path': sourcePath,
+        'include_unclassified': includeUnclassified,
+        'operation': operation,
+      },
+      timeout: _config.classificationTimeout,
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        'Failed to generate reorganization preview',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// Execute file reorganization (move or copy)
+  Future<Map<String, dynamic>> reorganizeFiles({
+    required String destination,
+    String? sourcePath,
+    bool includeUnclassified = false,
+    String operation = 'move',
+  }) async {
+    final response = await _post(
+      '/api/organization/reorganize',
+      body: {
+        'destination': destination,
+        if (sourcePath != null) 'source_path': sourcePath,
+        'include_unclassified': includeUnclassified,
+        'operation': operation,
+      },
+      timeout: _config.classificationTimeout,
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        'Failed to reorganize files',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
     }
   }
 }

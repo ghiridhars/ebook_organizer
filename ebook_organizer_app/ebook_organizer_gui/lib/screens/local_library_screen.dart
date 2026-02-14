@@ -9,6 +9,7 @@ import '../widgets/active_filters_bar.dart';
 import '../widgets/skeleton_widgets.dart';
 import '../services/api_service.dart';
 import 'classification_screen.dart';
+import 'reorganize_screen.dart';
 
 /// Full-screen view for browsing local ebooks
 class LocalLibraryView extends StatefulWidget {
@@ -392,6 +393,13 @@ class _Toolbar extends StatelessWidget {
                 tooltip: 'Auto-classify books',
               ),
               const SizedBox(width: 8),
+              // Reorganize button
+              IconButton(
+                onPressed: () => _showReorganizeScreen(context, provider),
+                icon: const Icon(Icons.drive_file_move_outline),
+                tooltip: 'Reorganize files into folders',
+              ),
+              const SizedBox(width: 8),
               // Settings button
               IconButton(
                 onPressed: () => _showSettingsDialog(context, provider),
@@ -507,6 +515,33 @@ class _Toolbar extends StatelessWidget {
       );
       
       // Refresh the library to show updated classifications
+      await provider.loadEbooks();
+    }
+  }
+
+  void _showReorganizeScreen(BuildContext context, LocalLibraryProvider provider) async {
+    final result = await Navigator.push<Map<String, dynamic>?>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReorganizeScreen(provider: provider),
+      ),
+    );
+
+    if (result != null && context.mounted) {
+      final succeeded = result['succeeded'] ?? 0;
+      final failed = result['failed'] ?? 0;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Reorganized $succeeded files${failed > 0 ? ' ($failed failed)' : ''}',
+          ),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
       await provider.loadEbooks();
     }
   }

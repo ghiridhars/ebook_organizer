@@ -389,6 +389,28 @@ class LocalLibraryServiceWeb implements LocalLibraryServiceInterface {
     authors.sort();
     return authors;
   }
+
+  @override
+  Future<int> updateClassifications(Map<String, Map<String, String?>> classifications) async {
+    int count = 0;
+    for (final entry in classifications.entries) {
+      final index = _ebooks.indexWhere((e) => e.filePath == entry.key);
+      if (index >= 0) {
+        _ebooks[index] = _ebooks[index].copyWith(
+          category: entry.value['category'],
+          subGenre: entry.value['sub_genre'],
+        );
+        count++;
+      }
+    }
+    return count;
+  }
+
+  @override
+  Future<int> updateFilePaths(Map<String, String> pathMappings) async {
+    // File reorganization is not meaningful on web platform
+    return 0;
+  }
 }
 
 // Typedef for compatibility with existing code
