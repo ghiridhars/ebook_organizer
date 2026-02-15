@@ -1,84 +1,115 @@
-# Ebook Organizer - Multi-Platform Application
+# Ebook Organizer
 
-A modern, cross-platform ebook organizer with cloud storage integration (Google Drive & OneDrive).
+A cross-platform desktop ebook organizer with metadata extraction, taxonomy-based classification, file reorganization, and cloud storage integration scaffolding.
 
 ## Architecture
 
 **Flutter Frontend + FastAPI Backend**
 
-- **Frontend**: Flutter (supports Windows, Linux, Web)
-- **Backend**: FastAPI (Python) - handles cloud storage, metadata extraction
-- **Database**: SQLite (local caching for offline mode)
-- **Cloud**: Google Drive & OneDrive integration
+- **Frontend**: Flutter (Windows, Linux, Web) — Material Design 3 with light/dark theme
+- **Backend**: FastAPI (Python) — metadata extraction, classification, file organization, local folder sync
+- **Database**: SQLite with FTS5 full-text search (backend) + sqflite (frontend local cache)
+- **Cloud**: Google Drive & OneDrive integration (scaffolded, OAuth not yet implemented)
 
-## 🚀 Quick Start
+The Flutter app **auto-starts the Python backend** as a child process on launch (desktop platforms).
 
-### Option 1: Docker (Recommended)
+## Features
 
-```bash
-# Start the backend service
-docker-compose up -d
+- Multi-platform support (Windows, Linux, Web)
+- Local folder scanning with background sync
+- Metadata extraction for EPUB, PDF, MOBI/AZW/AZW3 formats
+- Multi-strategy classification (embedded metadata → folder-based → Open Library API → title keywords)
+- Hierarchical taxonomy system (Category → SubGenre → Author)
+- File reorganization into `Category/SubGenre/Author/` folder structure (preview + execute)
+- MOBI/AZW/AZW3 to EPUB conversion (pure Python, no Calibre needed)
+- Full-text search with FTS5 and autocomplete suggestions
+- Library statistics dashboard
+- Metadata read/write (EPUB & PDF writable; MOBI read-only)
+- Batch classification of multiple ebooks
+- Light/dark theme with persistence
+- Responsive Material Design 3 UI
 
-# The backend will be available at:
-# - API: http://localhost:8000
-# - API Documentation: http://localhost:8000/docs
-# - Health Check: http://localhost:8000/health
+### Not Yet Implemented
+- Google Drive / OneDrive OAuth authentication
+- Cloud file sync (local scan works; cloud sync endpoints are scaffolded)
+
+## Quick Start
+
+### Option 1: Launcher Scripts (Recommended)
+
+**Windows:**
+```batch
+cd ebook_organizer_app
+start.bat
 ```
 
-### Option 2: Manual Setup
+**Linux/Mac:**
+```bash
+cd ebook_organizer_app
+chmod +x start.sh
+./start.sh
+```
+
+These scripts set up a Python venv, install dependencies, start the backend, then launch the Flutter app.
+
+### Option 2: Docker (Backend Only)
+
+```bash
+cd ebook_organizer_app
+docker-compose up -d
+
+# Backend available at:
+#   API: http://localhost:8000
+#   Docs: http://localhost:8000/docs
+#   Health: http://localhost:8000/health
+```
+
+Then run the Flutter frontend separately:
+```bash
+cd ebook_organizer_gui
+flutter pub get
+flutter run -d windows   # or -d linux, -d chrome
+```
+
+### Option 3: Manual Setup
 
 **1. Start Backend**
 ```bash
-cd backend
+cd ebook_organizer_app/backend
+python -m venv venv
+# Windows: venv\Scripts\activate
+# Linux/Mac: source venv/bin/activate
 pip install -r requirements.txt
 python run.py
 ```
 
-**2. Start Frontend** (in new terminal)
+**2. Start Frontend** (in a new terminal)
 ```bash
-cd ebook_organizer_gui
+cd ebook_organizer_app/ebook_organizer_gui
 flutter pub get
-
-# Windows
-flutter run -d windows
-
-# Linux  
-flutter run -d linux
-
-# Web
-flutter run -d chrome
+flutter run -d windows   # or -d linux, -d chrome
 ```
 
-### Option 3: Make Commands
+### Option 4: Make Commands
 
 ```bash
-# View all available commands
-make help
-
-# Install dependencies locally
-make install
-
-# Run backend locally
-make backend
-
-# Run Flutter app locally (separate terminal)
-make flutter
-
-# Run both backend and Flutter in parallel
-make dev
+cd ebook_organizer_app
+make help          # View all available commands
+make install       # Install Python + Flutter deps
+make setup         # install + init DB
+make dev           # Run backend + Flutter in parallel
+make backend       # Run backend only
+make flutter       # Run Flutter app only
+make test          # Run pytest
+make docker-up     # Start Docker containers
+make docker-down   # Stop Docker containers
 ```
 
-## 📦 Docker Services
+## Prerequisites
 
-### Backend Service
-- **Container**: `ebook_organizer_backend`
-- **Port**: 8000
-- **Auto-restart**: Yes
-- **Hot-reload**: Enabled (dev mode)
-
-### Flutter Builder Service
-- **Purpose**: Build Flutter apps in containerized environment
-- **Usage**: `make docker-flutter` or `docker-compose --profile build run flutter-builder`
+- **Python**: 3.10+ ([Install Python](https://python.org))
+- **Flutter SDK**: 3.9+ ([Install Flutter](https://flutter.dev/docs/get-started/install))
+- **Git**: For version control
 
 ## Project Structure
 
@@ -86,300 +117,182 @@ make dev
 ebook_organizer_app/
 ├── backend/                    # FastAPI Backend
 │   ├── app/
-│   │   ├── main.py            # FastAPI application entry
-│   │   ├── config.py          # Configuration
-│   │   ├── models/            # Database & API models
-│   │   ├── routes/            # API endpoints
-│   │   ├── services/          # Business logic
-│   │   └── utils/             # Utilities
-│   └── requirements.txt       # Python dependencies
+│   │   ├── main.py            # FastAPI app, CORS, lifespan, route mounting
+│   │   ├── config.py          # Pydantic settings (.env support)
+│   │   ├── middleware.py       # Request logging middleware
+│   │   ├── models/
+│   │   │   ├── database.py    # SQLAlchemy models (Ebook, Tag, SyncLog, CloudConfig)
+│   │   │   └── schemas.py     # Pydantic request/response schemas
+│   │   ├── routes/
+│   │   │   ├── ebooks.py      # CRUD, search, stats
+│   │   │   ├── cloud.py       # Cloud provider status
+│   │   │   ├── metadata.py    # Read/write/classify metadata
+│   │   │   ├── sync.py        # Local folder sync
+│   │   │   ├── conversion.py  # MOBI→EPUB conversion
+│   │   │   └── organization.py # Taxonomy, classification, file reorganization
+│   │   └── services/
+│   │       ├── database.py           # DB engine, session, FTS5 init
+│   │       ├── metadata_service.py   # EPUB/PDF/MOBI metadata read/write
+│   │       ├── metadata_classifier.py # Multi-strategy classification
+│   │       ├── taxonomy.py           # Category/SubGenre taxonomy tree
+│   │       ├── organization_service.py # Batch classify, browse, stats
+│   │       ├── file_organizer_service.py # File move/copy reorganization
+│   │       ├── sync_service.py       # Local folder scan + DB insert
+│   │       ├── search_service.py     # FTS5 full-text search
+│   │       └── openlibrary_service.py # Open Library API integration
+│   ├── tests/                  # pytest tests
+│   ├── docs/                   # API.md, DEVELOPMENT.md
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── run.py
 │
 ├── ebook_organizer_gui/       # Flutter Frontend
 │   ├── lib/
-│   │   ├── main.dart          # App entry point + backend auto-start
-│   │   ├── models/            # Data models
-│   │   ├── services/          # API client, database, backend manager
-│   │   ├── providers/         # State management
-│   │   ├── screens/           # UI screens
-│   │   └── widgets/           # Reusable UI components
-│   └── pubspec.yaml           # Flutter dependencies
+│   │   ├── main.dart          # App entry point, backend auto-start, MultiProvider
+│   │   ├── models/            # Ebook, LocalEbook, LibraryStats, CloudProvider, EbookFileData
+│   │   ├── providers/         # EbookProvider, LibraryProvider, LocalLibraryProvider, ThemeProvider
+│   │   ├── screens/           # Home, LocalLibrary, EbookDetail, Classification, Reorganize
+│   │   ├── services/          # API, Backend, Database, Metadata, Conversion, LocalLibrary
+│   │   └── widgets/           # EbookCard, Grid, SearchBar, FilterChips, StatsDashboard, Skeletons
+│   └── pubspec.yaml
 │
 ├── docker-compose.yml         # Docker orchestration
 ├── Makefile                   # Build automation
-├── start.bat / start.sh       # Cross-platform launchers
-└── README.md                  # This file
+├── start.bat                  # Windows launcher
+└── start.sh                   # Linux/Mac launcher
+
+online-library-organizer/      # Standalone Python CLI organizer (plan-based workflow)
 ```
 
-## API Documentation
+## API Endpoints
 
-Once backend is running, visit:
-- Swagger UI: http://127.0.0.1:8000/docs
-- ReDoc: http://127.0.0.1:8000/redoc
+Once the backend is running, interactive docs are at:
+- **Swagger UI**: http://127.0.0.1:8000/docs
+- **ReDoc**: http://127.0.0.1:8000/redoc
 
-### Key API Endpoints
+| Group | Method | Path | Description |
+|-------|--------|------|-------------|
+| Health | GET | `/` | API status |
+| Health | GET | `/health` | Detailed health (DB, services) |
+| Ebooks | GET | `/api/ebooks/` | List with filters & pagination |
+| Ebooks | GET | `/api/ebooks/search` | FTS5 full-text search |
+| Ebooks | GET | `/api/ebooks/search/suggestions` | Autocomplete suggestions |
+| Ebooks | GET | `/api/ebooks/{id}` | Get single ebook |
+| Ebooks | PATCH | `/api/ebooks/{id}` | Update metadata |
+| Ebooks | DELETE | `/api/ebooks/{id}` | Delete from local DB |
+| Ebooks | GET | `/api/ebooks/stats/library` | Library statistics |
+| Cloud | GET | `/api/cloud/providers` | Cloud provider status |
+| Cloud | POST | `/api/cloud/providers/{provider}/authenticate` | Initiate OAuth (not yet implemented) |
+| Cloud | POST | `/api/cloud/providers/{provider}/disconnect` | Disconnect provider |
+| Metadata | GET | `/api/metadata/read` | Read ebook metadata from file |
+| Metadata | PUT | `/api/metadata/write` | Write metadata to file (EPUB/PDF) |
+| Metadata | GET | `/api/metadata/supported-formats` | Supported formats & capabilities |
+| Metadata | POST | `/api/metadata/classify` | Classify an ebook file |
+| Metadata | POST | `/api/metadata/extract-comprehensive` | Full extraction + classification |
+| Sync | POST | `/api/sync/trigger` | Trigger local folder scan |
+| Sync | GET | `/api/sync/status` | Sync progress status |
+| Conversion | POST | `/api/conversion/mobi-to-epub` | Convert MOBI/AZW to EPUB |
+| Conversion | GET | `/api/conversion/check-requirements` | Check conversion libraries |
+| Organization | GET | `/api/organization/taxonomy` | Full taxonomy tree |
+| Organization | GET | `/api/organization/stats` | Classification coverage stats |
+| Organization | GET | `/api/organization/preview` | Preview classification (dry run) |
+| Organization | POST | `/api/organization/classify/{id}` | Classify single ebook |
+| Organization | POST | `/api/organization/batch-classify` | Batch classify ebooks |
+| Organization | PUT | `/api/organization/classify/{id}` | Manual classification update |
+| Organization | GET | `/api/organization/browse` | Browse by category/sub-genre |
+| Organization | GET | `/api/organization/unclassified` | List unclassified ebooks |
+| Organization | POST | `/api/organization/reorganize-preview` | Preview file reorganization |
+| Organization | POST | `/api/organization/reorganize` | Execute file reorganization |
 
-- `GET /api/ebooks/` - List ebooks with filters
-- `GET /api/ebooks/{id}` - Get single ebook
-- `PATCH /api/ebooks/{id}` - Update ebook metadata
-- `GET /api/ebooks/stats/library` - Library statistics
-- `GET /api/cloud/providers` - Cloud provider status
-- `POST /api/sync/trigger` - Trigger cloud sync
+## Supported Ebook Formats
 
-## Development
-
-### Backend Development
-```bash
-cd backend
-pip install -r requirements.txt
-python run.py  # Auto-reload enabled
-```
-
-### Frontend Development
-```bash
-cd ebook_organizer_gui
-flutter run  # Hot reload enabled
-```
+| Format | Read Metadata | Write Metadata | Convert To EPUB |
+|--------|:---:|:---:|:---:|
+| EPUB | ✅ | ✅ | — |
+| PDF | ✅ | ✅ | — |
+| MOBI | ✅ | ❌ | ✅ |
+| AZW / AZW3 | ✅ | ❌ | ✅ |
+| FB2 | ✅ | ❌ | — |
 
 ## Configuration
 
-### Backend Configuration
-Edit `backend/app/config.py` or create `backend/.env` file:
+Edit `backend/app/config.py` or create `backend/.env`:
 
 ```env
 API_HOST=127.0.0.1
 API_PORT=8000
 DEBUG=True
 DATABASE_URL=sqlite:///./ebook_organizer.db
+SUPPORTED_FORMATS=["epub","pdf","mobi","azw","azw3","fb2"]
+MAX_FILE_SIZE_MB=100
+
+# Cloud (not yet functional)
+GOOGLE_DRIVE_CREDENTIALS_FILE=credentials_google.json
+ONEDRIVE_CLIENT_ID=
+ONEDRIVE_CLIENT_SECRET=
 ```
 
-### Cloud Storage Setup (Coming Soon)
-- Google Drive: OAuth credentials needed
-- OneDrive: Microsoft App registration needed
+## Docker Services
 
-## Troubleshooting
-
-### Backend won't start
-- Check Python version: `python --version` (need 3.8+)
-- Install dependencies: `pip install -r requirements.txt`
-- Check port 8000 is not in use
-
-### Flutter won't run
-- Check Flutter installation: `flutter doctor`
-- Get dependencies: `flutter pub get`
-- Enable desktop support: `flutter config --enable-windows-desktop` (Windows)
-
-### Database issues
-- Delete `ebook_organizer.db` to reset
-- Check file permissions
-
-## Technology Stack
-
-**Frontend:**
-- Flutter 3.35.6
-- Material Design 3
-- Provider (state management)
-- sqflite (local database)
-- http/dio (API client)
-
-**Backend:**
-- FastAPI 0.109.0
-- SQLAlchemy (ORM)
-- Pydantic (validation)
-- Google/Microsoft APIs (cloud storage)
-
-## Contributing
-
-This is a work in progress. Key areas to contribute:
-1. Cloud storage integration (Google Drive/OneDrive)
-2. OAuth implementation
-3. Metadata extraction enhancement
-4. UI/UX improvements
-
-## Next Steps
-
-1. **Quick Start**: Run `docker-compose up -d` and visit http://localhost:8000/docs
-2. **Test Flutter app**: `cd ebook_organizer_gui && flutter run`
-3. **Implement cloud storage**: Add OAuth for Google Drive/OneDrive
-4. **Integrate metadata extraction**: Port existing Python code
-5. **Production deployment**: Configure environment variables
-│   │   ├── models/            # Data models
-│   │   ├── services/          # API & database services
-│   │   ├── providers/         # State management
-│   │   ├── screens/           # UI screens
-│   │   └── widgets/           # Reusable widgets
-│   └── pubspec.yaml           # Flutter dependencies
-│
-├── launch.bat                 # Windows launcher
-└── launch.sh                  # Linux/Mac launcher
-```
-
-## Features
-
-### Current (MVP)
-- ✅ Multi-platform support (Windows, Linux, Web)
-- ✅ Local SQLite database for offline caching
-- ✅ REST API backend with FastAPI
-- ✅ Search and filter ebooks
-- ✅ Library statistics dashboard
-- ✅ Responsive Material Design UI
-- ✅ Online/offline mode indication
-
-### Planned
-- 🔄 Google Drive integration
-- 🔄 OneDrive integration
-- 🔄 OAuth authentication
-- 🔄 Metadata extraction (EPUB, PDF, MOBI)
-- 🔄 Bulk operations
-- 🔄 Drag-and-drop organization
-- 🔄 Cloud sync
-
-## Prerequisites
-
-- **Flutter**: 3.35.6+ ([Install Flutter](https://flutter.dev/docs/get-started/install))
-- **Python**: 3.8+ ([Install Python](https://python.org))
-- **Git**: For version control
-
-## Quick Start
-
-### Option 1: Using Launcher Script (Recommended)
-
-**Windows:**
-```batch
-launch.bat
-```
-
-**Linux/Mac:**
-```bash
-chmod +x launch.sh
-./launch.sh
-```
-
-### Option 2: Manual Launch
-
-**1. Start Backend**
-```bash
-cd backend
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
-pip install -r requirements.txt
-python -m app.main
-```
-
-Backend will run at: http://127.0.0.1:8000
-
-**2. Start Frontend** (in new terminal)
-```bash
-cd ebook_organizer_gui
-flutter pub get
-
-# Windows
-flutter run -d windows
-
-# Linux
-flutter run -d linux
-
-# Web
-flutter run -d chrome
-```
-
-## API Documentation
-
-Once backend is running, visit:
-- Swagger UI: http://127.0.0.1:8000/docs
-- ReDoc: http://127.0.0.1:8000/redoc
+| Service | Container | Port | Description |
+|---------|-----------|------|-------------|
+| `backend` | `ebook_organizer_backend` | 8000 | FastAPI with hot-reload, auto-restart, healthcheck |
+| `flutter-builder` | — | — | Build Flutter Linux release (activated via `--profile build`) |
 
 ## Development
 
-### Backend Development
+### Running Tests
 ```bash
-cd backend
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-python -m app.main  # Auto-reload enabled
+cd ebook_organizer_app/backend
+pytest
 ```
 
-### Frontend Development
-```bash
-cd ebook_organizer_gui
-flutter run  # Hot reload enabled
-```
+Tests cover API endpoints, metadata classifier, and taxonomy system.
 
-### Key API Endpoints
+### Logging
+The backend uses structured logging with console output, JSON file logs, and a separate error log (see `backend/app/logging_config.py`).
 
-- `GET /api/ebooks/` - List ebooks with filters
-- `GET /api/ebooks/{id}` - Get single ebook
-- `PATCH /api/ebooks/{id}` - Update ebook metadata
-- `GET /api/ebooks/stats/library` - Library statistics
-- `GET /api/cloud/providers` - Cloud provider status
-- `POST /api/sync/trigger` - Trigger cloud sync
+## Technology Stack
 
-## Configuration
+**Frontend:**
+- Flutter SDK ^3.9.2
+- Material Design 3 (light/dark theme)
+- Provider (state management)
+- sqflite / sqflite_common_ffi (local database)
+- http + dio (API clients)
+- file_picker (folder selection)
+- archive + xml (client-side EPUB metadata)
+- process_run (backend process management)
 
-### Backend Configuration
-Edit `backend/app/config.py` or create `.env` file:
-
-```env
-API_HOST=127.0.0.1
-API_PORT=8000
-DEBUG=True
-DATABASE_URL=sqlite:///./ebook_organizer.db
-```
-
-### Cloud Storage Setup (Coming Soon)
-- Google Drive: OAuth credentials needed
-- OneDrive: Microsoft App registration needed
+**Backend:**
+- Python 3.10+ (Docker uses 3.11)
+- FastAPI 0.109.0
+- SQLAlchemy 2.0 (ORM) + Alembic (migrations)
+- Pydantic 2.x + pydantic-settings
+- ebooklib, pypdf, mobi (metadata extraction)
+- Open Library API (metadata enrichment)
+- SQLite FTS5 (full-text search)
 
 ## Troubleshooting
 
 ### Backend won't start
-- Check Python version: `python --version` (need 3.8+)
+- Check Python version: `python --version` (need 3.10+)
 - Install dependencies: `pip install -r requirements.txt`
 - Check port 8000 is not in use
 
 ### Flutter won't run
-- Check Flutter installation: `flutter doctor`
+- Check Flutter: `flutter doctor`
 - Get dependencies: `flutter pub get`
-- Enable desktop support: `flutter config --enable-windows-desktop` (Windows)
+- Enable desktop: `flutter config --enable-windows-desktop`
 
 ### Database issues
 - Delete `ebook_organizer.db` to reset
 - Check file permissions
 
-## Technology Stack
-
-**Frontend:**
-- Flutter 3.35.6
-- Material Design 3
-- Provider (state management)
-- sqflite (local database)
-- http/dio (API client)
-
-**Backend:**
-- FastAPI 0.109.0
-- SQLAlchemy (ORM)
-- Pydantic (validation)
-- Google/Microsoft APIs (cloud storage)
-
 ## Contributing
 
-This is a work in progress. Key areas to contribute:
-1. Cloud storage integration (Google Drive/OneDrive)
-2. OAuth implementation
-3. Metadata extraction enhancement
+Areas that need work:
+1. Google Drive / OneDrive OAuth implementation
+2. Cloud file sync (backend endpoints are scaffolded)
+3. Additional ebook format support
 4. UI/UX improvements
-
-## License
-
-See LICENSE file
-
-## Next Steps
-
-1. **Install Python dependencies**: `cd backend && pip install -r requirements.txt`
-2. **Test backend**: `python -m app.main` then visit http://127.0.0.1:8000/docs
-3. **Test Flutter app**: `cd ebook_organizer_gui && flutter run`
-4. **Implement cloud storage**: Add OAuth for Google Drive/OneDrive
-5. **Integrate metadata extraction**: Port existing Python code from `online-library-organizer/`
