@@ -3,11 +3,14 @@ Metadata API endpoints
 Handles reading and writing ebook metadata for local files.
 """
 
+import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from pydantic import BaseModel
 from typing import Dict, Optional, List
 import tempfile
 import os
+
+logger = logging.getLogger(__name__)
 import urllib.parse
 
 from app.services.metadata_service import metadata_service, EbookMetadata
@@ -107,14 +110,23 @@ async def write_metadata(
     """
     # Decode the file path
     decoded_path = urllib.parse.unquote(file_path)
+    logger.info(f"[METADATA API] PUT /write called for: {decoded_path}")
+    logger.info(f"[METADATA API] Request body: title={request.title if request else None!r}, "
+                 f"author={request.author if request else None!r}, "
+                 f"description={request.description if request else None!r}, "
+                 f"publisher={request.publisher if request else None!r}, "
+                 f"language={request.language if request else None!r}, "
+                 f"subjects={request.subjects if request else None!r}")
     
     # Validate file exists
     if not os.path.exists(decoded_path):
+        logger.error(f"[METADATA API] File not found: {decoded_path}")
         raise HTTPException(status_code=404, detail=f"File not found: {decoded_path}")
     
     # Check format is writable
     if not metadata_service.is_writable(decoded_path):
         fmt = metadata_service.get_format(decoded_path)
+        logger.warning(f"[METADATA API] Format not writable: {fmt}")
         if fmt == '.mobi':
             raise HTTPException(
                 status_code=400,
@@ -134,25 +146,41 @@ async def write_metadata(
         language=request.language if request else None,
         subjects=request.subjects if request and request.subjects else [],
     )
+    logger.info(f"[METADATA API] Built EbookMetadata object: {metadata.to_dict()}")
     
     # Write metadata
     try:
         success = await metadata_service.write_metadata(decoded_path, metadata)
+        logger.info(f"[METADATA API] write_metadata returned: {success}")
         
-        if success:
-            return MetadataUpdateResponse(
-                success=True,
-                file_path=decoded_path,
-                message=f"Metadata successfully updated for {os.path.basename(decoded_path)}"
-            )
-        else:
-            return MetadataUpdateResponse(
-                success=False,
-                file_path=decoded_path,
-                message="Failed to update metadata",
-                error="Unknown error during write operation"
-            )
+        return MetadataUpdateResponse(
+            success=True,
+            file_path=decoded_path,
+            message=f"Metadata successfully updated for {os.path.basename(decoded_path)}"
+        )
+    except PermissionError as e:
+        logger.error(f"[METADATA API] Permission error: {e}", exc_info=True)
+        return MetadataUpdateResponse(
+            success=False,
+            file_path=decoded_path,
+            message="Failed to update metadata",
+            error=f"Permission denied: {e}. The file may be encrypted, read-only, or locked by OneDrive/another process."
+        )
+    except OSError as e:
+        logger.error(f"[METADATA API] OS error during metadata write: {e}", exc_info=True)
+        error_detail = str(e)
+        if 'Errno 22' in error_detail or 'Invalid argument' in error_detail:
+            error_detail = (f"{e}. This often happens with files in OneDrive/cloud-synced folders. "
+                           f"Try: (1) ensure the file is fully downloaded (not cloud-only), "
+                           f"(2) pause OneDrive sync, or (3) copy the file to a local folder first.")
+        return MetadataUpdateResponse(
+            success=False,
+            file_path=decoded_path,
+            message="Failed to update metadata",
+            error=error_detail
+        )
     except Exception as e:
+        logger.error(f"[METADATA API] Exception during metadata write: {e}", exc_info=True)
         return MetadataUpdateResponse(
             success=False,
             file_path=decoded_path,

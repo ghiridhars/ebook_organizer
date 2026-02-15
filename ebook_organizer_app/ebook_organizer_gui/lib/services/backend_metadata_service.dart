@@ -37,8 +37,8 @@ class BackendMetadataService {
   
   /// Write metadata to a file using the Python backend.
   /// 
-  /// Returns true on success, false on failure.
-  Future<bool> writeMetadata(String filePath, {
+  /// Returns a record with success status and optional error message.
+  Future<({bool success, String? error})> writeMetadata(String filePath, {
     String? title,
     String? author,
     String? description,
@@ -57,20 +57,40 @@ class BackendMetadataService {
       if (language != null) body['language'] = language;
       if (subjects != null) body['subjects'] = subjects;
       
+      print('[BackendMetadataService] writeMetadata called for: $filePath');
+      print('[BackendMetadataService] Request body: $body');
+      print('[BackendMetadataService] Fields being sent: ${body.keys.toList()}');
+      print('[BackendMetadataService] Empty/null fields NOT sent: '
+          'title=${title == null ? "null" : (title.isEmpty ? "empty" : "set")}, '
+          'author=${author == null ? "null" : (author.isEmpty ? "empty" : "set")}, '
+          'description=${description == null ? "null" : (description.isEmpty ? "empty" : "set")}, '
+          'publisher=${publisher == null ? "null" : (publisher.isEmpty ? "empty" : "set")}');
+      
+      final url = '$baseUrl/api/metadata/write?file_path=$encodedPath';
+      print('[BackendMetadataService] PUT $url');
+      
       final response = await http.put(
-        Uri.parse('$baseUrl/api/metadata/write?file_path=$encodedPath'),
+        Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 30));
       
+      print('[BackendMetadataService] Response status: ${response.statusCode}');
+      print('[BackendMetadataService] Response body: ${response.body}');
+      
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['success'] == true;
+        final success = data['success'] == true;
+        final error = data['error'] as String?;
+        print('[BackendMetadataService] Backend reported success=$success, message=${data['message']}, error=$error');
+        return (success: success, error: error);
       }
-      return false;
-    } catch (e) {
-      print('Error writing metadata via backend: $e');
-      return false;
+      print('[BackendMetadataService] Non-200 response: ${response.statusCode}');
+      return (success: false, error: 'Backend returned status ${response.statusCode}');
+    } catch (e, stackTrace) {
+      print('[BackendMetadataService] Error writing metadata via backend: $e');
+      print('[BackendMetadataService] Stack trace: $stackTrace');
+      return (success: false, error: 'Connection error: $e');
     }
   }
   

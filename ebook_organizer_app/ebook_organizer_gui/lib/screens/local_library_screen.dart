@@ -321,11 +321,10 @@ class _Toolbar extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // Search bar + action buttons row
           Row(
             children: [
-              // Search bar
               Expanded(
-                flex: 2,
                 child: TextField(
                   controller: searchController,
                   decoration: InputDecoration(
@@ -351,18 +350,6 @@ class _Toolbar extends StatelessWidget {
                   onChanged: provider.setSearchQuery,
                 ),
               ),
-              const SizedBox(width: 16),
-              // Format filter
-              _FormatDropdown(provider: provider),
-              const SizedBox(width: 8),
-              // Category filter
-              _CategoryDropdown(provider: provider),
-              const SizedBox(width: 8),
-              // Author filter
-              _AuthorDropdown(provider: provider),
-              const SizedBox(width: 8),
-              // Sort dropdown
-              _SortDropdown(provider: provider),
               const SizedBox(width: 8),
               // View mode toggle
               IconButton(
@@ -386,26 +373,60 @@ class _Toolbar extends StatelessWidget {
                 tooltip: 'Rescan library',
               ),
               const SizedBox(width: 8),
-              // Auto-classify button
-              IconButton(
-                onPressed: () => _showAutoClassifyDialog(context, provider),
-                icon: const Icon(Icons.auto_awesome),
-                tooltip: 'Auto-classify books',
+              // More actions menu
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                tooltip: 'More actions',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'classify':
+                      _showAutoClassifyDialog(context, provider);
+                    case 'reorganize':
+                      _showReorganizeScreen(context, provider);
+                    case 'settings':
+                      _showSettingsDialog(context, provider);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'classify',
+                    child: ListTile(
+                      leading: Icon(Icons.auto_awesome),
+                      title: Text('Auto-classify books'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'reorganize',
+                    child: ListTile(
+                      leading: Icon(Icons.drive_file_move_outline),
+                      title: Text('Reorganize files'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'settings',
+                    child: ListTile(
+                      leading: Icon(Icons.settings),
+                      title: Text('Library settings'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
               ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Filter dropdowns row
+          Row(
+            children: [
+              Expanded(child: _FormatDropdown(provider: provider)),
               const SizedBox(width: 8),
-              // Reorganize button
-              IconButton(
-                onPressed: () => _showReorganizeScreen(context, provider),
-                icon: const Icon(Icons.drive_file_move_outline),
-                tooltip: 'Reorganize files into folders',
-              ),
+              Expanded(child: _CategoryDropdown(provider: provider)),
               const SizedBox(width: 8),
-              // Settings button
-              IconButton(
-                onPressed: () => _showSettingsDialog(context, provider),
-                icon: const Icon(Icons.settings),
-                tooltip: 'Library settings',
-              ),
+              Expanded(child: _AuthorDropdown(provider: provider)),
+              const SizedBox(width: 8),
+              Expanded(child: _SortDropdown(provider: provider)),
             ],
           ),
           // Stats row
@@ -558,6 +579,7 @@ class _FormatDropdown extends StatelessWidget {
       value: provider.selectedFormat,
       hint: const Text('All formats'),
       underline: const SizedBox(),
+      isExpanded: true,
       borderRadius: BorderRadius.circular(8),
       items: [
         const DropdownMenuItem(value: null, child: Text('All formats')),
@@ -580,6 +602,7 @@ class _SortDropdown extends StatelessWidget {
     return DropdownButton<String>(
       value: provider.sortBy,
       underline: const SizedBox(),
+      isExpanded: true,
       borderRadius: BorderRadius.circular(8),
       items: const [
         DropdownMenuItem(value: 'title', child: Text('Sort by Title')),
@@ -629,6 +652,7 @@ class _CategoryDropdownState extends State<_CategoryDropdown> {
       value: widget.provider.selectedCategory,
       hint: const Text('All categories'),
       underline: const SizedBox(),
+      isExpanded: true,
       borderRadius: BorderRadius.circular(8),
       items: [
         const DropdownMenuItem(value: null, child: Text('All categories')),
@@ -676,6 +700,7 @@ class _AuthorDropdownState extends State<_AuthorDropdown> {
       value: widget.provider.selectedAuthor,
       hint: const Text('All authors'),
       underline: const SizedBox(),
+      isExpanded: true,
       borderRadius: BorderRadius.circular(8),
       items: [
         const DropdownMenuItem(value: null, child: Text('All authors')),

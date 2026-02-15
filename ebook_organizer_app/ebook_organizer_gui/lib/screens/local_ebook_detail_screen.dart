@@ -668,10 +668,14 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
       }
     } else if (!kIsWeb && format == 'pdf') {
       // PDF: Use Python backend
+      String? pdfWriteError;
+      print('[SaveChanges] PDF file detected: ${_ebook.filePath}');
       final backendAvailable = await backendMetadataService.isBackendAvailable();
+      print('[SaveChanges] Backend available: $backendAvailable');
       
       if (backendAvailable) {
         final shouldUpdateFile = await _showUpdateFileDialog(format: 'PDF');
+        print('[SaveChanges] User chose to update PDF file: $shouldUpdateFile');
         if (shouldUpdateFile == true) {
           if (mounted) {
             scaffoldMessenger.showSnackBar(
@@ -679,16 +683,35 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
             );
           }
 
-          fileUpdated = await backendMetadataService.writeMetadata(
+          print('[SaveChanges] Calling backendMetadataService.writeMetadata with:');
+          print('[SaveChanges]   title: ${updatedEbook.title}');
+          print('[SaveChanges]   author: ${updatedEbook.author}');
+          print('[SaveChanges]   description: ${updatedEbook.description}');
+          print('[SaveChanges]   tags: ${updatedEbook.tags}');
+          
+          final result = await backendMetadataService.writeMetadata(
             _ebook.filePath,
             title: updatedEbook.title,
             author: updatedEbook.author,
             description: updatedEbook.description,
             subjects: updatedEbook.tags,
           );
+          fileUpdated = result.success;
+          pdfWriteError = result.error;
+
+          print('[SaveChanges] PDF file metadata write result: $fileUpdated, error: $pdfWriteError');
 
           if (mounted) {
             scaffoldMessenger.hideCurrentSnackBar();
+            if (!fileUpdated && pdfWriteError != null) {
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text('PDF file update failed: $pdfWriteError'),
+                  duration: const Duration(seconds: 6),
+                  backgroundColor: Colors.red[700],
+                ),
+              );
+            }
           }
         }
       } else {
