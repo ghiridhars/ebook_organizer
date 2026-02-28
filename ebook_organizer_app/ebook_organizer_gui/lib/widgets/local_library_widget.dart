@@ -1,5 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import '../utils/cover_image_utils.dart';
+import '../utils/format_utils.dart';
 import 'package:provider/provider.dart';
 import '../providers/local_library_provider.dart';
 import '../models/local_ebook.dart';
@@ -312,9 +313,9 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Text(
         label,
@@ -338,9 +339,9 @@ class _ErrorBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.1),
+        color: Colors.red.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.withOpacity(0.3)),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -424,14 +425,17 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
-        transform: Matrix4.identity()
-          ..scale(_isHovered ? 1.03 : 1.0),
+        transform: Matrix4.diagonal3Values(
+          _isHovered ? 1.03 : 1.0,
+          _isHovered ? 1.03 : 1.0,
+          1.0,
+        ),
         transformAlignment: Alignment.center,
         child: Card(
           clipBehavior: Clip.antiAlias,
           elevation: _isHovered ? 8 : 2,
           shadowColor: _isHovered 
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.3) 
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.3) 
               : null,
           child: InkWell(
             onTap: () => _openDetailScreen(context),
@@ -535,8 +539,8 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
       return Stack(
         fit: StackFit.expand,
         children: [
-          Image.file(
-            File(ebook.coverPath!),
+          buildCoverImage(
+            coverPath: ebook.coverPath!,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               // Fallback to format icon if image fails to load
@@ -550,7 +554,7 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: _getFormatColor(ebook.fileFormat).withOpacity(0.9),
+                color: getFormatColor(ebook.fileFormat).withValues(alpha: 0.9),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -573,21 +577,21 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
 
   Widget _buildFormatPlaceholder(LocalEbook ebook) {
     return Container(
-      color: _getFormatColor(ebook.fileFormat).withOpacity(0.1),
+      color: getFormatColor(ebook.fileFormat).withValues(alpha: 0.1),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              _getFormatIcon(ebook.fileFormat),
+              getFormatIcon(ebook.fileFormat),
               size: 48,
-              color: _getFormatColor(ebook.fileFormat),
+              color: getFormatColor(ebook.fileFormat),
             ),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: _getFormatColor(ebook.fileFormat),
+                color: getFormatColor(ebook.fileFormat),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -718,39 +722,4 @@ class _LocalEbookCardState extends State<LocalEbookCard> {
     );
   }
 
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.book;
-      case 'cbz':
-      case 'cbr':
-        return Icons.collections_bookmark;
-      default:
-        return Icons.description;
-    }
-  }
-
-  Color _getFormatColor(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Colors.red;
-      case 'epub':
-        return Colors.green;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Colors.orange;
-      case 'cbz':
-      case 'cbr':
-        return Colors.purple;
-      default:
-        return Colors.blue;
-    }
-  }
 }

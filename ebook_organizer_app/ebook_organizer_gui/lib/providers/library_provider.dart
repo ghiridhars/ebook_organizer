@@ -85,7 +85,7 @@ class LibraryProvider with ChangeNotifier {
           active = status['is_active'] == true;
           notifyListeners();
         } catch (e) {
-           print('Error polling sync status: $e');
+           debugPrint('Error polling sync status: $e');
         }
       }
 

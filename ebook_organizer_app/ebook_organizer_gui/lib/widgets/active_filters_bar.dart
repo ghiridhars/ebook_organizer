@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/local_library_provider.dart';
+import '../utils/format_utils.dart';
 
 /// Widget displaying active filters as dismissible chips
 class ActiveFiltersBar extends StatelessWidget {
@@ -47,8 +48,8 @@ class ActiveFiltersBar extends StatelessWidget {
             context,
             icon: Icons.description,
             label: provider.selectedFormat!.toUpperCase(),
-            backgroundColor: _getFormatColor(provider.selectedFormat!).withOpacity(0.2),
-            labelColor: _getFormatColor(provider.selectedFormat!),
+            backgroundColor: getFormatColor(provider.selectedFormat!).withValues(alpha: 0.2),
+            labelColor: getFormatColor(provider.selectedFormat!),
             onDelete: () => provider.clearFormat(),
           ));
         }
@@ -68,10 +69,10 @@ class ActiveFiltersBar extends StatelessWidget {
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceVariant.withOpacity(0.3),
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
             border: Border(
               bottom: BorderSide(
-                color: colorScheme.outline.withOpacity(0.2),
+                color: colorScheme.outline.withValues(alpha: 0.2),
               ),
             ),
           ),
@@ -150,21 +151,4 @@ class ActiveFiltersBar extends StatelessWidget {
     );
   }
 
-  Color _getFormatColor(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Colors.red;
-      case 'epub':
-        return Colors.green;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Colors.orange;
-      case 'cbz':
-      case 'cbr':
-        return Colors.purple;
-      default:
-        return Colors.blue;
-    }
-  }
 }

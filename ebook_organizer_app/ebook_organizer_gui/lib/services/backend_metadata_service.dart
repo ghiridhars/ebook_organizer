@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Service to communicate with Python backend for metadata operations.
@@ -30,7 +31,7 @@ class BackendMetadataService {
       }
       return null;
     } catch (e) {
-      print('Error reading metadata from backend: $e');
+      debugPrint('Error reading metadata from backend: $e');
       return null;
     }
   }
@@ -57,17 +58,17 @@ class BackendMetadataService {
       if (language != null) body['language'] = language;
       if (subjects != null) body['subjects'] = subjects;
       
-      print('[BackendMetadataService] writeMetadata called for: $filePath');
-      print('[BackendMetadataService] Request body: $body');
-      print('[BackendMetadataService] Fields being sent: ${body.keys.toList()}');
-      print('[BackendMetadataService] Empty/null fields NOT sent: '
+      debugPrint('[BackendMetadataService] writeMetadata called for: $filePath');
+      debugPrint('[BackendMetadataService] Request body: $body');
+      debugPrint('[BackendMetadataService] Fields being sent: ${body.keys.toList()}');
+      debugPrint('[BackendMetadataService] Empty/null fields NOT sent: '
           'title=${title == null ? "null" : (title.isEmpty ? "empty" : "set")}, '
           'author=${author == null ? "null" : (author.isEmpty ? "empty" : "set")}, '
           'description=${description == null ? "null" : (description.isEmpty ? "empty" : "set")}, '
           'publisher=${publisher == null ? "null" : (publisher.isEmpty ? "empty" : "set")}');
       
       final url = '$baseUrl/api/metadata/write?file_path=$encodedPath';
-      print('[BackendMetadataService] PUT $url');
+      debugPrint('[BackendMetadataService] PUT $url');
       
       final response = await http.put(
         Uri.parse(url),
@@ -75,21 +76,21 @@ class BackendMetadataService {
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 30));
       
-      print('[BackendMetadataService] Response status: ${response.statusCode}');
-      print('[BackendMetadataService] Response body: ${response.body}');
+      debugPrint('[BackendMetadataService] Response status: ${response.statusCode}');
+      debugPrint('[BackendMetadataService] Response body: ${response.body}');
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final success = data['success'] == true;
         final error = data['error'] as String?;
-        print('[BackendMetadataService] Backend reported success=$success, message=${data['message']}, error=$error');
+        debugPrint('[BackendMetadataService] Backend reported success=$success, message=${data['message']}, error=$error');
         return (success: success, error: error);
       }
-      print('[BackendMetadataService] Non-200 response: ${response.statusCode}');
+      debugPrint('[BackendMetadataService] Non-200 response: ${response.statusCode}');
       return (success: false, error: 'Backend returned status ${response.statusCode}');
     } catch (e, stackTrace) {
-      print('[BackendMetadataService] Error writing metadata via backend: $e');
-      print('[BackendMetadataService] Stack trace: $stackTrace');
+      debugPrint('[BackendMetadataService] Error writing metadata via backend: $e');
+      debugPrint('[BackendMetadataService] Stack trace: $stackTrace');
       return (success: false, error: 'Connection error: $e');
     }
   }
@@ -107,7 +108,7 @@ class BackendMetadataService {
       }
       return [];
     } catch (e) {
-      print('Error fetching supported formats: $e');
+      debugPrint('Error fetching supported formats: $e');
       return [];
     }
   }

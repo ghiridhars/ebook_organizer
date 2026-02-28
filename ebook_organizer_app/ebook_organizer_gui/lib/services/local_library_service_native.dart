@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 import 'package:archive/archive.dart';
@@ -167,7 +168,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
         }
       } catch (e) {
         // Fall back to filename-based extraction
-        print('Failed to read EPUB metadata for ${file.path}: $e');
+        debugPrint('Failed to read EPUB metadata for ${file.path}: $e');
       }
     }
     // For PDF/MOBI, try to read metadata via Python backend
@@ -194,7 +195,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
           );
         }
       } catch (e) {
-        print('Failed to read ${ebook.fileFormat.toUpperCase()} metadata for ${file.path}: $e');
+        debugPrint('Failed to read ${ebook.fileFormat.toUpperCase()} metadata for ${file.path}: $e');
       }
     }
     
@@ -218,7 +219,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
     // Check if backend is available for PDF/MOBI metadata reading
     final backendAvailable = await backendMetadataService.isBackendAvailable();
     if (backendAvailable) {
-      print('Backend available - will read PDF/MOBI metadata during scan');
+      debugPrint('Backend available - will read PDF/MOBI metadata during scan');
     }
 
     final db = await database;
@@ -361,7 +362,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
           tags = (metadata['subjects'] as List<dynamic>?)?.cast<String>();
         }
       } catch (e) {
-        print('Failed to read EPUB metadata: $e');
+        debugPrint('Failed to read EPUB metadata: $e');
       }
     }
 
@@ -468,7 +469,7 @@ class LocalLibraryServiceNative implements LocalLibraryServiceInterface {
 
       return metadata;
     } catch (e) {
-      print('Error parsing EPUB: $e');
+      debugPrint('Error parsing EPUB: $e');
       return null;
     }
   }

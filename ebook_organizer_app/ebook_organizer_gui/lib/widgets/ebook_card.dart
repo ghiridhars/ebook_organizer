@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/ebook.dart';
 import '../screens/ebook_detail_screen.dart';
+import '../utils/format_utils.dart';
 
 class EbookCard extends StatelessWidget {
   final Ebook ebook;
@@ -29,7 +30,7 @@ class EbookCard extends StatelessWidget {
               width: double.infinity,
               color: Theme.of(context).colorScheme.primaryContainer,
               child: Icon(
-                _getFormatIcon(ebook.fileFormat),
+                getFormatIcon(ebook.fileFormat),
                 size: 64,
                 color: Theme.of(context).colorScheme.onPrimaryContainer,
               ),
@@ -118,18 +119,4 @@ class EbookCard extends StatelessWidget {
     );
   }
 
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.import_contacts;
-      default:
-        return Icons.book;
-    }
-  }
 }

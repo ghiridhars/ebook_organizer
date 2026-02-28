@@ -3,7 +3,7 @@ FastAPI Backend for Ebook Organizer
 Handles cloud storage integration, metadata extraction, and ebook management
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
@@ -12,12 +12,15 @@ from contextlib import asynccontextmanager
 from app.routes import ebooks, cloud, metadata, sync, conversion, organization
 from app.services.database import init_db
 from app.logging_config import logger
+from app.config import settings
+from app.auth import verify_api_key
 from app.middleware import (
     RequestLoggingMiddleware,
     http_exception_handler,
     validation_exception_handler,
     generic_exception_handler,
 )
+from app.rate_limit import RateLimitMiddleware
 
 
 @asynccontextmanager
@@ -27,11 +30,16 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Ebook Organizer Backend...")
     init_db()
     logger.info("Database initialized")
+    if settings.API_KEY:
+        logger.info("API-key authentication is ENABLED")
+    else:
+        logger.info("API-key authentication is DISABLED (open access)")
     yield
     # Shutdown
     logger.info("Shutting down Ebook Organizer Backend...")
 
 
+# Apply API-key dependency globally to all routes
 app = FastAPI(
     title="Ebook Organizer API",
     description="Backend API for multi-platform ebook organization with cloud storage",
@@ -39,6 +47,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
+    dependencies=[Depends(verify_api_key)],
 )
 
 # Exception Handlers
@@ -49,6 +58,9 @@ app.add_exception_handler(Exception, generic_exception_handler)
 
 # Request Logging Middleware
 app.add_middleware(RequestLoggingMiddleware)
+
+# Rate Limiting Middleware
+app.add_middleware(RateLimitMiddleware)
 
 # CORS Configuration for Flutter Frontend
 # Note: Wildcards in origins don't work as expected; use allow_origin_regex or explicit list

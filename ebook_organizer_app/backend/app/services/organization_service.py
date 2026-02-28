@@ -258,7 +258,6 @@ def batch_classify_ebooks(
                         sub_genre=ebook.sub_genre,
                         author=ebook.author,
                         metadata_source="manual_override",
-                        was_updated=was_updated
                     )
             except Exception:
                 result.failed += 1

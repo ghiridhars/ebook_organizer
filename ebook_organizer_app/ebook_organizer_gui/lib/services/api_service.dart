@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/ebook.dart';
 import '../models/library_stats.dart';
@@ -26,25 +25,21 @@ class ApiService {
 
   String get baseUrl => _config.apiBaseUrl;
 
-  /// Safely decode JSON, returning null for empty or invalid responses
-  dynamic _safeJsonDecode(String body, {String context = 'API response'}) {
-    if (body.isEmpty) {
-      debugPrint('Warning: Empty $context body received');
-      return null;
+  /// Common headers (Content-Type + optional API key)
+  Map<String, String> get _headers {
+    final h = <String, String>{'Content-Type': 'application/json'};
+    final key = _config.apiKey;
+    if (key != null && key.isNotEmpty) {
+      h['X-API-Key'] = key;
     }
-    try {
-      return json.decode(body);
-    } on FormatException catch (e) {
-      debugPrint('Unable to parse JSON message in $context: ${e.message}');
-      return null;
-    }
+    return h;
   }
 
   /// Make a GET request with proper error handling and timeout
   Future<http.Response> _get(String path, {Duration? timeout}) async {
     final uri = Uri.parse('$baseUrl$path');
     try {
-      return await http.get(uri).timeout(
+      return await http.get(uri, headers: _headers).timeout(
         timeout ?? _config.requestTimeout,
         onTimeout: () => throw TimeoutException('Request timed out'),
       );
@@ -62,7 +57,7 @@ class ApiService {
     try {
       return await http.post(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers,
         body: body != null ? json.encode(body) : null,
       ).timeout(
         timeout ?? _config.requestTimeout,
@@ -81,7 +76,7 @@ class ApiService {
     try {
       return await http.patch(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers,
         body: json.encode(body),
       ).timeout(
         timeout ?? _config.requestTimeout,
@@ -98,7 +93,7 @@ class ApiService {
   Future<http.Response> _delete(String path, {Duration? timeout}) async {
     final uri = Uri.parse('$baseUrl$path');
     try {
-      return await http.delete(uri).timeout(
+      return await http.delete(uri, headers: _headers).timeout(
         timeout ?? _config.requestTimeout,
         onTimeout: () => throw TimeoutException('Request timed out'),
       );

@@ -1,7 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/local_ebook.dart';
 import '../screens/local_ebook_detail_screen.dart';
+import '../utils/cover_image_utils.dart';
+import '../utils/format_utils.dart';
 
 /// Compact list item widget for list view mode
 class LocalEbookListItem extends StatefulWidget {
@@ -38,7 +39,7 @@ class _LocalEbookListItemState extends State<LocalEbookListItem> {
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         decoration: BoxDecoration(
           color: _isHovered 
-              ? colorScheme.surfaceVariant.withOpacity(0.5)
+              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
         ),
@@ -119,7 +120,7 @@ class _LocalEbookListItemState extends State<LocalEbookListItem> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: _getFormatColor(ebook.fileFormat),
+                      color: getFormatColor(ebook.fileFormat),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -146,8 +147,8 @@ class _LocalEbookListItemState extends State<LocalEbookListItem> {
     if (ebook.coverPath != null && ebook.coverPath!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: Image.file(
-          File(ebook.coverPath!),
+        child: buildCoverImage(
+          coverPath: ebook.coverPath!,
           width: size,
           height: size * 1.3,
           fit: BoxFit.cover,
@@ -166,14 +167,14 @@ class _LocalEbookListItemState extends State<LocalEbookListItem> {
       width: size,
       height: size * 1.3,
       decoration: BoxDecoration(
-        color: _getFormatColor(ebook.fileFormat).withOpacity(0.1),
+        color: getFormatColor(ebook.fileFormat).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Center(
         child: Icon(
-          _getFormatIcon(ebook.fileFormat),
+          getFormatIcon(ebook.fileFormat),
           size: 28,
-          color: _getFormatColor(ebook.fileFormat),
+          color: getFormatColor(ebook.fileFormat),
         ),
       ),
     );
@@ -188,41 +189,6 @@ class _LocalEbookListItemState extends State<LocalEbookListItem> {
     );
   }
 
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.book;
-      case 'cbz':
-      case 'cbr':
-        return Icons.collections_bookmark;
-      default:
-        return Icons.description;
-    }
-  }
-
-  Color _getFormatColor(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Colors.red;
-      case 'epub':
-        return Colors.green;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Colors.orange;
-      case 'cbz':
-      case 'cbr':
-        return Colors.purple;
-      default:
-        return Colors.blue;
-    }
-  }
 }
 
 /// List view for displaying local ebooks

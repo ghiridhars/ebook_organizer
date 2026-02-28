@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # API Key – leave empty to disable auth (default for local desktop use)
+    API_KEY: str = ""
+    
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 120
+    
     @field_validator('SECRET_KEY')
     @classmethod
     def validate_secret_key(cls, v: str) -> str:

@@ -4,13 +4,15 @@ Handles syncing local files to the database.
 """
 
 import os
-import hashlib
+import logging
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.models.database import Ebook, SyncLog
+from app.models.database import Ebook
 from app.models.schemas import SyncResponse
 from app.services.metadata_service import metadata_service
+
+logger = logging.getLogger(__name__)
 
 class SyncService:
     """Service for synchronizing ebook libraries"""
@@ -71,7 +73,7 @@ class SyncService:
         
         self._reset_status()
         self._update_status(stage="scanning directory")
-        print(f"DEBUG: SyncService scanning directory: {path}")
+        logger.debug(f"SyncService scanning directory: {path}")
 
         start_time = datetime.now()
         
@@ -111,7 +113,7 @@ class SyncService:
             )
             
         except Exception as e:
-            print(f"Sync failed: {e}")
+            logger.error(f"Sync failed: {e}")
             db.rollback()
             self._update_status(
                 is_active=False,
@@ -180,7 +182,7 @@ class SyncService:
             self._status["books_added"] += 1
 
         except Exception as e:
-            print(f"Failed to process {file_path}: {e}")
+            logger.error(f"Failed to process {file_path}: {e}")
             self._status["books_failed"] += 1
 
 sync_service = SyncService()

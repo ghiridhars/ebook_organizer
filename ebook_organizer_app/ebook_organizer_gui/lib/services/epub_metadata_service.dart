@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 import 'package:path/path.dart' as path;
@@ -34,7 +35,7 @@ class EpubMetadataService {
 
       return _parseMetadata(document);
     } catch (e) {
-      print('Error reading EPUB metadata: $e');
+      debugPrint('Error reading EPUB metadata: $e');
       return null;
     }
   }
@@ -97,7 +98,7 @@ class EpubMetadataService {
 
       return true;
     } catch (e) {
-      print('Error writing EPUB metadata: $e');
+      debugPrint('Error writing EPUB metadata: $e');
       // Try to restore backup if it exists
       final backupFile = File('$epubPath.backup');
       if (await backupFile.exists()) {
@@ -131,7 +132,7 @@ class EpubMetadataService {
         return rootfiles.first.getAttribute('full-path');
       }
     } catch (e) {
-      print('Error parsing container.xml: $e');
+      debugPrint('Error parsing container.xml: $e');
     }
 
     return null;

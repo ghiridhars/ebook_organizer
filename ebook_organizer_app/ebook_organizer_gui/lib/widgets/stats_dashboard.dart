@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
+import '../utils/format_utils.dart';
 
 class StatsDashboard extends StatelessWidget {
   const StatsDashboard({super.key});
@@ -113,7 +114,7 @@ class StatsDashboard extends StatelessWidget {
                   child: Column(
                     children: byFormat.entries.map((entry) {
                       return ListTile(
-                        leading: Icon(_getFormatIcon(entry.key)),
+                        leading: Icon(getFormatIcon(entry.key)),
                         title: Text(entry.key.toUpperCase()),
                         trailing: Chip(
                           label: Text('${entry.value}'),
@@ -158,20 +159,7 @@ class StatsDashboard extends StatelessWidget {
     );
   }
 
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.import_contacts;
-      default:
-        return Icons.book;
-    }
-  }
+
 
   String _formatProviderName(String provider) {
     switch (provider) {

@@ -289,35 +289,35 @@ class _ReorganizeScreenState extends State<ReorganizeScreen> {
                         fontWeight: FontWeight.w600,
                         color: colorScheme.onSurface)),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: RadioListTile<String>(
-                        value: 'move',
-                        groupValue: _operation,
-                        onChanged: (v) =>
-                            setState(() => _operation = v!),
-                        title: const Text('Move'),
-                        subtitle: const Text('Relocate files',
-                            style: TextStyle(fontSize: 12)),
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
+                RadioGroup<String>(
+                  groupValue: _operation,
+                  onChanged: (v) {
+                    if (v != null) setState(() => _operation = v);
+                  },
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<String>(
+                          value: 'move',
+                          title: const Text('Move'),
+                          subtitle: const Text('Relocate files',
+                              style: TextStyle(fontSize: 12)),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: RadioListTile<String>(
-                        value: 'copy',
-                        groupValue: _operation,
-                        onChanged: (v) =>
-                            setState(() => _operation = v!),
-                        title: const Text('Copy'),
-                        subtitle: const Text('Keep originals',
-                            style: TextStyle(fontSize: 12)),
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
+                      Expanded(
+                        child: RadioListTile<String>(
+                          value: 'copy',
+                          title: const Text('Copy'),
+                          subtitle: const Text('Keep originals',
+                              style: TextStyle(fontSize: 12)),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 12),
 

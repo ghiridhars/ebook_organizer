@@ -1,9 +1,12 @@
 """Database service for SQLAlchemy session management"""
 
+import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from app.models.database import Base
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Create database engine
 engine = create_engine(
@@ -26,7 +29,7 @@ def init_db():
         db.close()
     except Exception as e:
         # FTS init failure is non-fatal, fallback search will work
-        print(f"FTS initialization note: {e}")
+        logger.info(f"FTS initialization note: {e}")
 
 def get_db():
     """Dependency for FastAPI to get database session"""

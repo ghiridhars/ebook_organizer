@@ -67,7 +67,7 @@ class MetadataService:
             else:
                 return None
         except Exception as e:
-            print(f"Error reading metadata from {file_path}: {e}")
+            logger.error(f"Error reading metadata from {file_path}: {e}")
             return None
     
     async def write_metadata(self, file_path: str, metadata: EbookMetadata) -> bool:
@@ -466,7 +466,7 @@ class MetadataService:
                 
                 return EbookMetadata(title=title if title else None)
         except Exception as e:
-            print(f"Error in raw MOBI parsing: {e}")
+            logger.error(f"Error in raw MOBI parsing: {e}")
             return EbookMetadata()
 
 

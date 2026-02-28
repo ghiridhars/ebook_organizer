@@ -275,33 +275,33 @@ class SettingsView extends StatelessWidget {
         Consumer<ThemeProvider>(
           builder: (context, themeProvider, _) {
             return Card(
-              child: Column(
-                children: [
-                  RadioListTile<ThemeMode>(
-                    title: const Text('System'),
-                    subtitle: const Text('Follow system settings'),
-                    secondary: const Icon(Icons.brightness_auto),
-                    value: ThemeMode.system,
-                    groupValue: themeProvider.themeMode,
-                    onChanged: (value) => themeProvider.setThemeMode(value!),
-                  ),
-                  RadioListTile<ThemeMode>(
-                    title: const Text('Light'),
-                    subtitle: const Text('Always use light theme'),
-                    secondary: const Icon(Icons.light_mode),
-                    value: ThemeMode.light,
-                    groupValue: themeProvider.themeMode,
-                    onChanged: (value) => themeProvider.setThemeMode(value!),
-                  ),
-                  RadioListTile<ThemeMode>(
-                    title: const Text('Dark'),
-                    subtitle: const Text('Always use dark theme'),
-                    secondary: const Icon(Icons.dark_mode),
-                    value: ThemeMode.dark,
-                    groupValue: themeProvider.themeMode,
-                    onChanged: (value) => themeProvider.setThemeMode(value!),
-                  ),
-                ],
+              child: RadioGroup<ThemeMode>(
+                groupValue: themeProvider.themeMode,
+                onChanged: (value) {
+                  if (value != null) themeProvider.setThemeMode(value);
+                },
+                child: Column(
+                  children: [
+                    RadioListTile<ThemeMode>(
+                      title: const Text('System'),
+                      subtitle: const Text('Follow system settings'),
+                      secondary: const Icon(Icons.brightness_auto),
+                      value: ThemeMode.system,
+                    ),
+                    RadioListTile<ThemeMode>(
+                      title: const Text('Light'),
+                      subtitle: const Text('Always use light theme'),
+                      secondary: const Icon(Icons.light_mode),
+                      value: ThemeMode.light,
+                    ),
+                    RadioListTile<ThemeMode>(
+                      title: const Text('Dark'),
+                      subtitle: const Text('Always use dark theme'),
+                      secondary: const Icon(Icons.dark_mode),
+                      value: ThemeMode.dark,
+                    ),
+                  ],
+                ),
               ),
             );
           },

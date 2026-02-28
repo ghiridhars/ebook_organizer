@@ -12,9 +12,12 @@ import urllib.parse
 import urllib.error
 import json
 import time
+import logging
 from typing import Optional, Dict, List, Tuple
 
-from app.services.taxonomy import TAXONOMY, classify_genre
+from app.services.taxonomy import TAXONOMY
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -89,7 +92,7 @@ def query_openlibrary(title: str, author: Optional[str] = None) -> Optional[Dict
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, 
             TimeoutError, Exception) as e:
         # Silently fail - API lookup is best-effort
-        print(f"Open Library API error: {e}")
+        logger.warning(f"Open Library API error: {e}")
         API_CACHE[cache_key] = None
         return None
 

@@ -13,6 +13,7 @@ class AppConfig {
   String _apiHost = '127.0.0.1';
   int _apiPort = 8000;
   bool _useHttps = false;
+  String? _apiKey;
 
   /// The API host address
   String get apiHost => _apiHost;
@@ -22,6 +23,9 @@ class AppConfig {
   
   /// Whether to use HTTPS
   bool get useHttps => _useHttps;
+
+  /// Optional API key for authenticated requests
+  String? get apiKey => _apiKey;
 
   /// The full base URL for API calls
   String get apiBaseUrl {
@@ -44,10 +48,12 @@ class AppConfig {
     String? host,
     int? port,
     bool? useHttps,
+    String? apiKey,
   }) {
     if (host != null) _apiHost = host;
     if (port != null) _apiPort = port;
     if (useHttps != null) _useHttps = useHttps;
+    if (apiKey != null) _apiKey = apiKey;
   }
 
   /// Supported ebook file extensions

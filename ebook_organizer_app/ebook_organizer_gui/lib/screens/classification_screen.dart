@@ -60,9 +60,9 @@ class _ClassificationScreenState extends State<ClassificationScreen> {
         ),
       ]);
 
-      final stats = results[0] as Map<String, dynamic>;
+      final stats = results[0];
       final taxonomy = results[1] as Map<String, List<String>>;
-      final preview = results[2] as Map<String, dynamic>;
+      final preview = results[2];
 
       // Flatten tree into book rows
       final books = <_BookRow>[];

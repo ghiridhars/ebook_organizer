@@ -8,6 +8,7 @@ import '../services/epub_metadata_service.dart';
 import '../services/backend_metadata_service.dart';
 import '../services/conversion_service.dart';
 import '../utils/platform_utils.dart' as platform;
+import '../utils/format_utils.dart';
 
 /// Detail screen for viewing and editing local ebook information
 class LocalEbookDetailScreen extends StatefulWidget {
@@ -129,7 +130,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
         color: colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),
@@ -205,7 +206,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: filled ? color : color.withOpacity(0.1),
+                color: filled ? color : color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
@@ -238,25 +239,25 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
           width: 150,
           height: 220,
           decoration: BoxDecoration(
-            color: _getFormatColor(_ebook.fileFormat).withOpacity(0.1),
+            color: getFormatColor(_ebook.fileFormat).withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: _getFormatColor(_ebook.fileFormat).withOpacity(0.3),
+              color: getFormatColor(_ebook.fileFormat).withValues(alpha: 0.3),
             ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                _getFormatIcon(_ebook.fileFormat),
+                getFormatIcon(_ebook.fileFormat),
                 size: 64,
-                color: _getFormatColor(_ebook.fileFormat),
+                color: getFormatColor(_ebook.fileFormat),
               ),
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _getFormatColor(_ebook.fileFormat),
+                  color: getFormatColor(_ebook.fileFormat),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -323,7 +324,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
                   _buildChip(
                     icon: Icons.description,
                     label: _ebook.fileFormat.toUpperCase(),
-                    color: _getFormatColor(_ebook.fileFormat),
+                    color: getFormatColor(_ebook.fileFormat),
                   ),
                   _buildChip(
                     icon: Icons.folder,
@@ -352,9 +353,9 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -571,7 +572,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
 
   Widget _buildDangerZone(ColorScheme colorScheme) {
     return Card(
-      color: Colors.red.withOpacity(0.05),
+      color: Colors.red.withValues(alpha: 0.05),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -669,13 +670,13 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
     } else if (!kIsWeb && format == 'pdf') {
       // PDF: Use Python backend
       String? pdfWriteError;
-      print('[SaveChanges] PDF file detected: ${_ebook.filePath}');
+      debugPrint('[SaveChanges] PDF file detected: ${_ebook.filePath}');
       final backendAvailable = await backendMetadataService.isBackendAvailable();
-      print('[SaveChanges] Backend available: $backendAvailable');
+      debugPrint('[SaveChanges] Backend available: $backendAvailable');
       
       if (backendAvailable) {
         final shouldUpdateFile = await _showUpdateFileDialog(format: 'PDF');
-        print('[SaveChanges] User chose to update PDF file: $shouldUpdateFile');
+        debugPrint('[SaveChanges] User chose to update PDF file: $shouldUpdateFile');
         if (shouldUpdateFile == true) {
           if (mounted) {
             scaffoldMessenger.showSnackBar(
@@ -683,11 +684,11 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
             );
           }
 
-          print('[SaveChanges] Calling backendMetadataService.writeMetadata with:');
-          print('[SaveChanges]   title: ${updatedEbook.title}');
-          print('[SaveChanges]   author: ${updatedEbook.author}');
-          print('[SaveChanges]   description: ${updatedEbook.description}');
-          print('[SaveChanges]   tags: ${updatedEbook.tags}');
+          debugPrint('[SaveChanges] Calling backendMetadataService.writeMetadata with:');
+          debugPrint('[SaveChanges]   title: ${updatedEbook.title}');
+          debugPrint('[SaveChanges]   author: ${updatedEbook.author}');
+          debugPrint('[SaveChanges]   description: ${updatedEbook.description}');
+          debugPrint('[SaveChanges]   tags: ${updatedEbook.tags}');
           
           final result = await backendMetadataService.writeMetadata(
             _ebook.filePath,
@@ -699,7 +700,7 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
           fileUpdated = result.success;
           pdfWriteError = result.error;
 
-          print('[SaveChanges] PDF file metadata write result: $fileUpdated, error: $pdfWriteError');
+          debugPrint('[SaveChanges] PDF file metadata write result: $fileUpdated, error: $pdfWriteError');
 
           if (mounted) {
             scaffoldMessenger.hideCurrentSnackBar();
@@ -812,7 +813,6 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
 
   Future<void> _convertToEpub() async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final provider = context.read<LocalLibraryProvider>();
     
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
@@ -961,41 +961,5 @@ class _LocalEbookDetailScreenState extends State<LocalEbookDetailScreen> {
   String _formatDate(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} '
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-  }
-
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.book;
-      case 'cbz':
-      case 'cbr':
-        return Icons.collections_bookmark;
-      default:
-        return Icons.description;
-    }
-  }
-
-  Color _getFormatColor(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Colors.red;
-      case 'epub':
-        return Colors.green;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Colors.orange;
-      case 'cbz':
-      case 'cbr':
-        return Colors.purple;
-      default:
-        return Colors.blue;
-    }
   }
 }

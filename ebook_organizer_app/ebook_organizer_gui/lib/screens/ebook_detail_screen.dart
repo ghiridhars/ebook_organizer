@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../models/ebook.dart';
-import '../providers/ebook_provider.dart';
+import '../utils/format_utils.dart';
 
 class EbookDetailScreen extends StatelessWidget {
   final Ebook ebook;
@@ -38,25 +37,25 @@ class EbookDetailScreen extends StatelessWidget {
                   width: 120,
                   height: 180,
                   decoration: BoxDecoration(
-                    color: _getFormatColor(ebook.fileFormat).withOpacity(0.1),
+                    color: getFormatColor(ebook.fileFormat).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: _getFormatColor(ebook.fileFormat).withOpacity(0.3),
+                      color: getFormatColor(ebook.fileFormat).withValues(alpha: 0.3),
                     ),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        _getFormatIcon(ebook.fileFormat),
+                        getFormatIcon(ebook.fileFormat),
                         size: 48,
-                        color: _getFormatColor(ebook.fileFormat),
+                        color: getFormatColor(ebook.fileFormat),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         ebook.fileFormat.toUpperCase(),
                         style: TextStyle(
-                          color: _getFormatColor(ebook.fileFormat),
+                          color: getFormatColor(ebook.fileFormat),
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -205,35 +204,5 @@ class EbookDetailScreen extends StatelessWidget {
 
   String _formatDate(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  }
-
-  IconData _getFormatIcon(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'epub':
-        return Icons.menu_book;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Icons.book;
-      default:
-        return Icons.description;
-    }
-  }
-
-  Color _getFormatColor(String format) {
-    switch (format.toLowerCase()) {
-      case 'pdf':
-        return Colors.red;
-      case 'epub':
-        return Colors.green;
-      case 'mobi':
-      case 'azw':
-      case 'azw3':
-        return Colors.orange;
-      default:
-        return Colors.blue;
-    }
   }
 }
