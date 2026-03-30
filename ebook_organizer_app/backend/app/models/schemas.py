@@ -41,6 +41,8 @@ class EbookResponse(EbookBase):
     cloud_file_id: str
     cloud_file_path: Optional[str] = None
     file_hash: Optional[str] = None
+    cover_path: Optional[str] = None
+    cover_url: Optional[str] = None
     last_synced: datetime
     is_synced: bool
     sync_status: str

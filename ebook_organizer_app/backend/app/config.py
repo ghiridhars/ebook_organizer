@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     CACHE_DIR: Path = BASE_DIR / "cache"
     TEMP_DIR: Path = BASE_DIR / "temp"
     
+    # Pi Deployment — Library & Watcher
+    WATCH_DIR: str = "/library/inbox"             # Directory to watch for new ebooks
+    LIBRARY_DIR: str = "/library"                 # Organized library root
+    COVERS_DIR: str = "./data/covers"             # Cover thumbnail storage
+    WATCH_DEBOUNCE_SECONDS: float = 2.0           # Wait after file creation before processing
+    WATCH_ENABLED: bool = True                    # Toggle watcher on/off
+    AUTO_ORGANIZE: bool = True                    # Move to organized structure after ingest
+    AUTO_CONVERT_MOBI: bool = True                # Convert MOBI→EPUB on ingest
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

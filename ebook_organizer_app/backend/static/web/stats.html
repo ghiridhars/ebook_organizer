@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Library statistics and dashboard">
+  <title>Stats — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('stats');</script>
+
+  <main class="container fade-in" x-data="statsData()" x-init="init()">
+    <div class="page-header">
+      <h1 class="page-title">📊 Library Dashboard</h1>
+      <p class="page-subtitle">Overview of your ebook library</p>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <span>Loading statistics...</span>
+    </div>
+
+    <template x-if="!loading">
+      <div>
+        <!-- Stat Cards -->
+        <div class="stat-grid">
+          <div class="stat-card">
+            <span class="stat-icon">📚</span>
+            <div class="stat-value" x-text="stats?.total_books || 0"></div>
+            <div class="stat-label">Total Books</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">💾</span>
+            <div class="stat-value" x-text="(stats?.total_size_mb || 0).toFixed(1) + ' MB'"></div>
+            <div class="stat-label">Total Size</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">📁</span>
+            <div class="stat-value" x-text="Object.keys(stats?.by_category || {}).length"></div>
+            <div class="stat-label">Categories</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">📄</span>
+            <div class="stat-value" x-text="Object.keys(stats?.by_format || {}).length"></div>
+            <div class="stat-label">Formats</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xl);align-items:start;">
+          <!-- Format Breakdown -->
+          <div class="card">
+            <div class="card-title mb-lg">Format Distribution</div>
+            <template x-for="[fmt, count] in Object.entries(stats?.by_format || {})" :key="fmt">
+              <div class="flex items-center justify-between mb-md">
+                <div class="flex items-center gap-sm">
+                  <span class="book-card-badge" :class="getFormatBadgeClass(fmt)" x-text="fmt.toUpperCase()" style="position:static"></span>
+                </div>
+                <div class="flex items-center gap-md" style="flex:1;margin-left:1rem;">
+                  <div class="progress" style="flex:1">
+                    <div class="progress-bar" :style="'width:' + (stats?.total_books ? Math.round(count / stats.total_books * 100) : 0) + '%'"></div>
+                  </div>
+                  <span class="text-sm text-muted" style="min-width:60px;text-align:right" x-text="count + ' books'"></span>
+                </div>
+              </div>
+            </template>
+            <div x-show="Object.keys(stats?.by_format || {}).length === 0" class="text-sm text-muted">No data</div>
+          </div>
+
+          <!-- Category Breakdown -->
+          <div class="card">
+            <div class="card-title mb-lg">Category Distribution</div>
+            <template x-for="[cat, count] in Object.entries(stats?.by_category || {}).sort((a,b) => b[1] - a[1]).slice(0, 10)" :key="cat">
+              <div class="flex items-center justify-between mb-md">
+                <span class="text-sm" style="min-width:120px" x-text="cat"></span>
+                <div class="flex items-center gap-md" style="flex:1;margin-left:1rem;">
+                  <div class="progress" style="flex:1">
+                    <div class="progress-bar" :style="'width:' + (stats?.total_books ? Math.round(count / stats.total_books * 100) : 0) + '%'"></div>
+                  </div>
+                  <span class="text-sm text-muted" style="min-width:60px;text-align:right" x-text="count"></span>
+                </div>
+              </div>
+            </template>
+            <div x-show="Object.keys(stats?.by_category || {}).length === 0" class="text-sm text-muted">No data</div>
+          </div>
+        </div>
+
+        <!-- Watcher Status -->
+        <div class="card mt-xl">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="status-dot" :class="watcherStatus?.running ? 'active' : 'inactive'"></span>
+              File Watcher
+            </div>
+            <button class="btn btn-secondary btn-sm" @click="toggleWatcher()" id="btn-toggle-watcher">
+              <span x-text="watcherStatus?.running ? '⏸ Pause' : '▶️ Start'"></span>
+            </button>
+          </div>
+          <template x-if="watcherStatus">
+            <div class="detail-meta" style="grid-template-columns:repeat(4,1fr)">
+              <div class="meta-item">
+                <div class="meta-label">Status</div>
+                <div class="meta-value" x-text="watcherStatus.running ? 'Active' : 'Stopped'"></div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">Watch Directory</div>
+                <div class="meta-value text-sm" x-text="watcherStatus.watch_dir || '—'"></div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">Files Processed</div>
+                <div class="meta-value" x-text="watcherStatus.files_processed || 0"></div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">Failed</div>
+                <div class="meta-value" :style="(watcherStatus.files_failed || 0) > 0 ? 'color:var(--danger)' : ''" x-text="watcherStatus.files_failed || 0"></div>
+              </div>
+            </div>
+          </template>
+          <div x-show="!watcherStatus" class="text-sm text-muted">Watcher status unavailable</div>
+        </div>
+
+        <!-- Recently Added -->
+        <div class="card mt-xl">
+          <div class="card-title mb-lg">Recently Added</div>
+          <template x-if="recentBooks.length > 0">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Author</th>
+                    <th>Category</th>
+                    <th>Format</th>
+                    <th>Added</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="book in recentBooks" :key="book.id">
+                    <tr>
+                      <td><a :href="'/web/book.html?id=' + book.id" x-text="book.title" style="font-weight:500"></a></td>
+                      <td class="text-muted" x-text="book.author || '—'"></td>
+                      <td><span class="tag" x-text="book.category || '—'" x-show="book.category"></span></td>
+                      <td><span class="book-card-badge" :class="getFormatBadgeClass(book.file_format)" x-text="(book.file_format || '').toUpperCase()" style="position:static"></span></td>
+                      <td class="text-muted text-sm" x-text="formatDate(book.created_at)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+          <div x-show="recentBooks.length === 0" class="text-sm text-muted">No recent books</div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card mt-xl">
+          <div class="card-title mb-lg">Quick Actions</div>
+          <div class="flex gap-md" style="flex-wrap:wrap">
+            <a href="/web/classify.html" class="btn btn-secondary">🏷️ Classify Unclassified</a>
+            <a href="/web/reorganize.html" class="btn btn-secondary">📁 Reorganize Library</a>
+            <button class="btn btn-secondary" @click="optimizeIndex()">🔧 Optimize Search Index</button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </main>
+</body>
+</html>

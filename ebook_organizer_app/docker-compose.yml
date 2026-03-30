@@ -10,10 +10,20 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/ebook_organizer.db:/app/ebook_organizer.db
+      - ebook_data:/app/data
+      - /mnt/library:/library               # External SSD mount point for ebooks
+      - /mnt/library/inbox:/library/inbox    # Watchdog monitored drop folder
     environment:
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=sqlite:///./ebook_organizer.db
+      - DATABASE_URL=sqlite:///./data/ebook_organizer.db
+      - WATCH_DIR=/library/inbox
+      - LIBRARY_DIR=/library
+      - COVERS_DIR=/app/data/covers
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '3.0'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -21,6 +31,21 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ebook_caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
   # Note: Flutter desktop apps typically don't run in containers
   # This is a build service only
@@ -40,6 +65,9 @@ services:
       - build
 
 volumes:
+  ebook_data:
+  caddy_data:
+  caddy_config:
   flutter-pub-cache:
 
 networks:

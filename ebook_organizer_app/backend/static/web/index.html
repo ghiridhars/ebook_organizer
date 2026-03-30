@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Browse, search, and read your ebook library from any device">
+  <title>Library — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('library');</script>
+
+  <main class="container fade-in" x-data="libraryData()" x-init="init()">
+    <!-- Search & Actions -->
+    <div class="search-bar" style="display: flex; gap: 1rem; align-items: center;">
+      <div style="position: relative; flex-grow: 1;">
+        <span class="search-icon">🔍</span>
+        <input
+          type="text"
+          class="search-input"
+          id="library-search"
+          placeholder="Search books by title, author, or description..."
+          x-model="search"
+          @input.debounce.400ms="doSearch()"
+          @keydown.enter="doSearch()"
+        >
+      </div>
+      <button class="btn btn-primary" @click="$refs.fileInput.click()" style="height: 100%; white-space: nowrap;">
+        <span x-show="uploading" class="loading-spinner" style="width:14px;height:14px;border-top-color:white;margin-right:4px;"></span>
+        <span x-text="uploading ? 'Uploading...' : '📤 Upload Book'"></span>
+      </button>
+      <input type="file" x-ref="fileInput" style="display: none" @change="uploadBook" accept=".epub,.pdf,.mobi,.azw3">
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <select class="filter-select" id="filter-category" x-model="category" @change="onFilterChange()">
+        <option value="">All Categories</option>
+        <template x-for="cat in categories" :key="cat">
+          <option :value="cat" x-text="cat"></option>
+        </template>
+      </select>
+
+      <select class="filter-select" id="filter-author" x-model="author" @change="onFilterChange()">
+        <option value="">All Authors</option>
+        <template x-for="a in authors" :key="a">
+          <option :value="a" x-text="a"></option>
+        </template>
+      </select>
+
+      <select class="filter-select" id="filter-format" x-model="format" @change="onFilterChange()">
+        <option value="">All Formats</option>
+        <option value="epub">EPUB</option>
+        <option value="pdf">PDF</option>
+        <option value="mobi">MOBI</option>
+      </select>
+
+      <div class="flex gap-xs" style="margin-left: auto;">
+        <select class="filter-select" id="filter-sort" x-model="sort" @change="onFilterChange()">
+          <option value="created_at">Date Added</option>
+          <option value="title">Title</option>
+          <option value="author">Author</option>
+        </select>
+        <button class="btn btn-secondary btn-icon" @click="order = order === 'asc' ? 'desc' : 'asc'; onFilterChange()" title="Toggle Sort Direction">
+          <span x-text="order === 'asc' ? '⬆️' : '⬇️'"></span>
+        </button>
+        <div style="width: 1px; background: var(--border); margin: 0 8px;"></div>
+        <button class="btn btn-secondary btn-icon" @click="toggleViewMode()" title="Toggle View Mode">
+          <span x-text="viewMode === 'grid' ? '📱' : '📄'"></span>
+        </button>
+      </div>
+    </div>
+
+      <span class="filter-count" x-show="!loading">
+        <span x-text="books.length"></span> books
+      </span>
+    </div>
+
+    <!-- Loading Skeleton -->
+    <div x-show="loading" :class="viewMode === 'grid' ? 'book-grid' : 'book-list'">
+      <template x-for="i in 12">
+        <template x-if="viewMode === 'grid'">
+          <div class="book-card">
+            <div class="book-card-cover skeleton"></div>
+            <div class="book-card-info">
+              <div class="skeleton" style="height:14px;width:80%;margin-bottom:6px;border-radius:4px"></div>
+              <div class="skeleton" style="height:12px;width:60%;border-radius:4px"></div>
+            </div>
+          </div>
+        </template>
+        <template x-if="viewMode === 'list'">
+          <div class="book-list-item">
+            <div class="book-list-cover skeleton" style="width: 60px; height: 90px; flex-shrink: 0;"></div>
+            <div style="flex-grow: 1; padding: 1rem;">
+              <div class="skeleton" style="height:16px;width:40%;margin-bottom:8px;border-radius:4px"></div>
+              <div class="skeleton" style="height:14px;width:20%;margin-bottom:12px;border-radius:4px"></div>
+              <div class="skeleton" style="height:12px;width:80%;border-radius:4px"></div>
+            </div>
+          </div>
+        </template>
+      </template>
+    </div>
+
+    <!-- Book Grid / List -->
+    <div x-show="!loading && books.length > 0" :class="viewMode === 'grid' ? 'book-grid' : 'book-list'">
+      <template x-for="book in books" :key="book.id">
+        <!-- Grid View -->
+        <template x-if="viewMode === 'grid'">
+          <div class="book-card" @click="openBook(book.id)">
+            <div class="book-card-cover">
+              <img
+                :src="getCoverUrl(book)"
+                :alt="book.title"
+                loading="lazy"
+                @error="$event.target.parentElement.innerHTML = '<div class=\'book-card-placeholder\'>📖</div>'"
+              >
+            </div>
+            <span class="book-card-badge" :class="getFormatBadgeClass(book.file_format)" x-text="(book.file_format || '').toUpperCase()"></span>
+            <div class="book-card-info">
+              <div class="book-card-title" x-text="book.title"></div>
+              <div class="book-card-author" x-text="book.author || 'Unknown Author'"></div>
+            </div>
+          </div>
+        </template>
+
+        <!-- List View -->
+        <template x-if="viewMode === 'list'">
+          <div class="book-list-item card" @click="openBook(book.id)">
+            <div class="book-list-cover">
+              <img
+                :src="getCoverUrl(book)"
+                :alt="book.title"
+                loading="lazy"
+                @error="$event.target.parentElement.innerHTML = '<div class=\'book-card-placeholder\' style=\'font-size:1.5rem\'>📖</div>'"
+              >
+            </div>
+            <div class="book-list-content">
+              <div class="flex justify-between" style="align-items: flex-start; margin-bottom: 0.5rem">
+                <div>
+                  <div class="book-list-title" x-text="book.title"></div>
+                  <div class="book-list-author text-muted" x-text="book.author || 'Unknown Author'"></div>
+                </div>
+                <span class="book-card-badge" style="position:static" :class="getFormatBadgeClass(book.file_format)" x-text="(book.file_format || '').toUpperCase()"></span>
+              </div>
+              <div class="text-sm text-secondary" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" x-text="book.description"></div>
+              <div class="flex gap-sm mt-sm">
+                <span class="tag" x-show="book.category" x-text="book.category"></span>
+                <span class="tag" x-show="book.sub_genre" x-text="book.sub_genre"></span>
+                <span class="text-xs text-muted mt-xs ml-auto" x-text="formatBytes(book.file_size)"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </template>
+    </div>
+
+    <!-- Empty State -->
+    <div x-show="!loading && books.length === 0" class="empty-state">
+      <div class="empty-state-icon">📚</div>
+      <div class="empty-state-text">No books found</div>
+      <div class="empty-state-sub">Try adjusting your search or filters, or add books to the inbox folder.</div>
+    </div>
+
+    <!-- Pagination -->
+    <div x-show="!loading && totalPages > 1" class="pagination">
+      <button class="pagination-btn" @click="goPage(page - 1)" :disabled="page <= 1">← Prev</button>
+      <template x-for="p in totalPages" :key="p">
+        <button class="pagination-btn" :class="{ active: p === page }" @click="goPage(p)" x-text="p" x-show="Math.abs(p - page) < 4 || p === 1 || p === totalPages"></button>
+      </template>
+      <button class="pagination-btn" @click="goPage(page + 1)" :disabled="page >= totalPages">Next →</button>
+    </div>
+  </main>
+</body>
+</html>

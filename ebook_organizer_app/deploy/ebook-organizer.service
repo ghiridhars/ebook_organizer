@@ -1,0 +1,20 @@
+[Unit]
+Description=eBook Organizer Backend
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/ebook-organizer/backend
+ExecStart=/opt/ebook-organizer/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+Environment=DATABASE_URL=sqlite:///./data/ebook_organizer.db
+Environment=WATCH_DIR=/mnt/library/inbox
+Environment=LIBRARY_DIR=/mnt/library
+Environment=COVERS_DIR=./data/covers
+Environment=WATCH_ENABLED=true
+Environment=DEBUG=false
+
+[Install]
+WantedBy=multi-user.target

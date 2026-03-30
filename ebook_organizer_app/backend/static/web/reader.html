@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — EPUB Reader">
+  <title>Reader — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+</head>
+<body style="margin:0;overflow:hidden;">
+  <div id="reader-app" class="reader-container">
+    <!-- Toolbar -->
+    <div class="reader-toolbar" id="reader-toolbar">
+      <div class="flex items-center gap-md">
+        <a id="btn-back" href="/web/" class="btn btn-secondary btn-sm" onclick="goBack(event)">← Back</a>
+        <span id="book-title" style="font-weight:600;font-size:var(--font-size-sm);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+      <div class="flex items-center gap-sm">
+        <button class="btn-icon" id="btn-theme" onclick="cycleTheme()" title="Change theme">🎨</button>
+        <button class="btn-icon" id="btn-font-down" onclick="changeFontSize(-2)" title="Decrease font size">A-</button>
+        <button class="btn-icon" id="btn-font-up" onclick="changeFontSize(2)" title="Increase font size">A+</button>
+        <span id="page-info" class="text-xs text-muted" style="min-width:80px;text-align:center;"></span>
+      </div>
+    </div>
+
+    <!-- Reader viewport -->
+    <div id="reader-viewport" style="position:absolute;top:48px;bottom:8px;left:0;right:0;"></div>
+
+    <!-- Navigation buttons -->
+    <button class="reader-nav-btn reader-nav-prev" id="btn-prev" onclick="goPrev()">‹</button>
+    <button class="reader-nav-btn reader-nav-next" id="btn-next" onclick="goNext()">›</button>
+
+    <!-- Progress bar -->
+    <div class="reader-progress">
+      <div class="progress" style="border-radius:0;">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="loading-overlay" style="position:absolute;inset:0;background:var(--bg-primary);z-index:20;">
+      <div class="loading-spinner" style="width:40px;height:40px;border-width:3px;"></div>
+      <span>Loading book...</span>
+    </div>
+  </div>
+
+  <script>
+    // ─── State ─────────────────────────────────────────────────────────
+    let book = null;
+    let rendition = null;
+    let bookId = null;
+    let currentTheme = 'dark';
+    let fontSize = 100; // percentage
+    let toolbarVisible = true;
+    let toolbarTimer = null;
+
+    const themes = {
+      dark: { body: { background: '#0f0f1a', color: '#e8e8f0' } },
+      light: { body: { background: '#faf8f5', color: '#1a1a2e' } },
+      sepia: { body: { background: '#f4ecd8', color: '#3d2e1f' } },
+    };
+
+    // ─── Initialize ────────────────────────────────────────────────────
+    (async function init() {
+      const params = new URLSearchParams(location.search);
+      bookId = params.get('id');
+      if (!bookId) { window.location.href = '/web/'; return; }
+
+      // Set back URL
+      document.getElementById('btn-back').href = `/web/book.html?id=${bookId}`;
+
+      // Load book info
+      try {
+        const info = await fetch(`/api/ebooks/${bookId}`).then(r => r.json());
+        document.getElementById('book-title').textContent = info.title || 'Untitled';
+        document.title = `${info.title} — eBook Reader`;
+      } catch (e) { /* ignore */ }
+
+      // Initialize epub.js
+      try {
+        book = ePub(`/api/ebooks/${bookId}/stream`);
+
+        rendition = book.renderTo('reader-viewport', {
+          width: '100%',
+          height: '100%',
+          spread: 'none',
+          flow: 'paginated',
+        });
+
+        // Apply theme
+        applyTheme(currentTheme);
+
+        // Restore saved position
+        const savedCfi = localStorage.getItem(`book-${bookId}-cfi`);
+        if (savedCfi) {
+          await rendition.display(savedCfi);
+        } else {
+          await rendition.display();
+        }
+
+        // Hide loading
+        document.getElementById('loading-overlay').style.display = 'none';
+
+        // ─── Events ──────────────────────────────────────────────────
+        // Save position on page turn
+        rendition.on('relocated', (location) => {
+          localStorage.setItem(`book-${bookId}-cfi`, location.start.cfi);
+          updateProgress(location);
+        });
+
+        // Keyboard navigation
+        rendition.on('keyup', handleKeyUp);
+        document.addEventListener('keyup', handleKeyUp);
+
+        // Touch swipe
+        let touchStartX = null;
+        rendition.on('touchstart', (e) => {
+          touchStartX = e.changedTouches[0].screenX;
+        });
+        rendition.on('touchend', (e) => {
+          if (touchStartX === null) return;
+          const diff = e.changedTouches[0].screenX - touchStartX;
+          if (Math.abs(diff) > 50) {
+            diff > 0 ? rendition.prev() : rendition.next();
+          }
+          touchStartX = null;
+        });
+
+        // Click to toggle toolbar
+        rendition.on('click', () => {
+          toggleToolbar();
+        });
+
+        // Auto-hide toolbar
+        startToolbarTimer();
+
+      } catch (e) {
+        document.getElementById('loading-overlay').innerHTML = `
+          <div style="text-align:center;">
+            <div style="font-size:3rem;margin-bottom:1rem;">⚠️</div>
+            <div>Failed to load book</div>
+            <div class="text-sm text-muted mt-md">${e.message}</div>
+            <a href="/web/book.html?id=${bookId}" class="btn btn-primary mt-lg">← Back to Book</a>
+          </div>
+        `;
+      }
+    })();
+
+    // ─── Navigation ────────────────────────────────────────────────────
+    function goPrev() { if (rendition) rendition.prev(); }
+    function goNext() { if (rendition) rendition.next(); }
+
+    function handleKeyUp(e) {
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') goPrev();
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') goNext();
+      if (e.key === 'Escape') window.location.href = `/web/book.html?id=${bookId}`;
+    }
+
+    function goBack(e) {
+      e.preventDefault();
+      window.location.href = `/web/book.html?id=${bookId}`;
+    }
+
+    // ─── Progress ──────────────────────────────────────────────────────
+    function updateProgress(location) {
+      if (!book || !book.locations) return;
+      const progress = book.locations.percentageFromCfi(location.start.cfi);
+      if (progress !== undefined) {
+        const pct = Math.round(progress * 100);
+        document.getElementById('progress-bar').style.width = `${pct}%`;
+        document.getElementById('page-info').textContent = `${pct}%`;
+      }
+    }
+
+    // ─── Theme ─────────────────────────────────────────────────────────
+    function cycleTheme() {
+      const order = ['dark', 'light', 'sepia'];
+      const idx = (order.indexOf(currentTheme) + 1) % order.length;
+      currentTheme = order[idx];
+      applyTheme(currentTheme);
+      localStorage.setItem('reader-theme', currentTheme);
+    }
+
+    function applyTheme(theme) {
+      const styles = themes[theme];
+      if (!rendition) return;
+
+      // Apply to epub.js iframe
+      rendition.themes.default(styles);
+
+      // Apply to reader container
+      const container = document.getElementById('reader-app');
+      container.style.background = styles.body.background;
+    }
+
+    // ─── Font Size ─────────────────────────────────────────────────────
+    function changeFontSize(delta) {
+      fontSize = Math.max(60, Math.min(200, fontSize + delta));
+      if (rendition) {
+        rendition.themes.fontSize(`${fontSize}%`);
+      }
+      localStorage.setItem('reader-font-size', fontSize);
+    }
+
+    // ─── Toolbar Auto-hide ─────────────────────────────────────────────
+    function toggleToolbar() {
+      toolbarVisible = !toolbarVisible;
+      const toolbar = document.getElementById('reader-toolbar');
+      toolbar.classList.toggle('hidden', !toolbarVisible);
+      if (toolbarVisible) startToolbarTimer();
+    }
+
+    function startToolbarTimer() {
+      clearTimeout(toolbarTimer);
+      toolbarTimer = setTimeout(() => {
+        const toolbar = document.getElementById('reader-toolbar');
+        toolbar.classList.add('hidden');
+        toolbarVisible = false;
+      }, 5000);
+    }
+
+    // Restore saved preferences
+    const savedTheme = localStorage.getItem('reader-theme');
+    if (savedTheme && themes[savedTheme]) currentTheme = savedTheme;
+
+    const savedFontSize = localStorage.getItem('reader-font-size');
+    if (savedFontSize) fontSize = parseInt(savedFontSize);
+  </script>
+</body>
+</html>

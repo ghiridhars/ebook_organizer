@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Application Settings">
+  <title>Settings — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('settings');</script>
+
+  <main class="container fade-in" x-data="settingsData()" x-init="init()">
+    <div class="page-header">
+      <h1 class="page-title">⚙️ Settings</h1>
+      <p class="page-subtitle">Configure eBook Organizer</p>
+    </div>
+
+    <div class="card mb-lg">
+      <div class="card-title mb-md">Appearance</div>
+      <div class="form-group mb-0">
+        <label class="form-label">Theme</label>
+        <p class="text-sm text-muted mb-sm">This application uses a Dark Mode-first glassmorphism UI. We recommend staying on Dark Mode for the best experience.</p>
+        <div class="flex gap-md">
+          <label style="cursor: pointer;" class="flex items-center gap-xs">
+            <input type="radio" value="system" x-model="theme" @change="saveSettings"> System Default
+          </label>
+          <label style="cursor: pointer;" class="flex items-center gap-xs">
+            <input type="radio" value="dark" x-model="theme" @change="saveSettings"> Dark
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Watcher Configuration -->
+    <div class="card mb-lg">
+      <div class="flex items-center justify-between mb-md">
+        <div class="card-title mb-0">Watcher Status</div>
+        <button class="btn btn-primary btn-sm" @click="toggleWatcher()" :disabled="loading">
+          <span x-text="watcher?.running ? '⏹️ Stop Watcher' : '▶️ Start Watcher'"></span>
+        </button>
+      </div>
+      
+      <div x-show="loading" class="text-sm text-muted">Checking status...</div>
+
+      <template x-if="watcher && !loading">
+        <div class="detail-meta" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="meta-item">
+            <div class="meta-label">Status</div>
+            <div class="meta-value" :style="{ color: watcher.running ? 'var(--success)' : 'var(--danger)' }" x-text="watcher.running ? 'Running' : 'Stopped'"></div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Total Processed</div>
+            <div class="meta-value" x-text="watcher.processed_count || 0"></div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Total Errors</div>
+            <div class="meta-value" x-text="watcher.error_count || 0"></div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Last Error</div>
+            <div class="meta-value" x-text="watcher.last_error || '—'"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="card mb-lg">
+      <div class="flex items-center justify-between mb-md">
+        <div class="card-title mb-0">Search Index</div>
+      </div>
+      <p class="text-sm text-muted mb-sm">Trigger an optimization of the SQLite Full-Text Search index to keep queries fast.</p>
+      <button class="btn btn-secondary" @click="optimizeIndex()">⚡ Optimize Index</button>
+    </div>
+
+  </main>
+</body>
+</html>

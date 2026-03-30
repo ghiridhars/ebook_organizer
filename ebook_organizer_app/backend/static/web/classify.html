@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Classify your ebook library">
+  <title>Classify — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('classify');</script>
+
+  <main class="container fade-in" x-data="classifierData()" x-init="init()">
+    <div class="page-header">
+      <h1 class="page-title">🏷️ Classify Books</h1>
+      <p class="page-subtitle">Review unclassified books and assign categories</p>
+    </div>
+
+    <!-- Stats Strip -->
+    <template x-if="stats">
+      <div class="card mb-lg" style="padding: 1rem 1.5rem">
+        <div class="flex items-center justify-between gap-md" style="flex-wrap: wrap">
+          <div class="flex gap-lg">
+            <div>
+              <div class="text-sm text-muted">Total Books</div>
+              <div class="font-bold text-lg" x-text="stats.total_books"></div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">Classified</div>
+              <div class="font-bold text-lg" style="color: var(--success)" x-text="stats.classified_books"></div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">Unclassified</div>
+              <div class="font-bold text-lg" style="color: var(--warning)" x-text="stats.unclassified_books"></div>
+            </div>
+          </div>
+          <div style="flex-grow: 1; max-width: 400px;">
+            <div class="flex justify-between text-xs mb-xs">
+              <span class="text-muted">Coverage</span>
+              <span class="font-bold" x-text="stats.coverage_percent.toFixed(1) + '%'"></span>
+            </div>
+            <div class="progress">
+              <div class="progress-bar" :style="'width: ' + stats.coverage_percent + '%'"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Actions bar -->
+    <div class="flex items-center justify-between mb-lg" style="flex-wrap:wrap; gap:1rem;">
+      <div class="search-bar" style="margin-bottom:0; flex-grow:1; max-width: 400px;">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="search-input" placeholder="Search unclassified books..." x-model="searchQuery" style="padding: 0.5rem 1rem 0.5rem 2.5rem;">
+      </div>
+      <div class="flex gap-sm">
+        <button class="btn btn-secondary" @click="saveOverrides()" x-show="hasAnyOverrides" :disabled="savingOverrides">
+          <span x-show="savingOverrides" class="loading-spinner" style="width:14px;height:14px"></span>
+          <span x-text="savingOverrides ? 'Saving...' : '💾 Save Overrides'"></span>
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="classifyAll()"
+          :disabled="classifyingAll || books.length === 0"
+        >
+          <span x-show="classifyingAll" class="loading-spinner" style="width:14px;height:14px"></span>
+          <span x-text="classifyingAll ? 'Classifying...' : '🤖 Classify All'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <span>Loading books...</span>
+    </div>
+
+    <!-- Table -->
+    <div x-show="!loading && books.length > 0" class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th @click="toggleSort('title')" style="cursor:pointer">
+              Title <span x-show="sortColumn==='title'" x-text="sortAscending ? '↑' : '↓'"></span>
+            </th>
+            <th @click="toggleSort('author')" style="cursor:pointer">
+              Author <span x-show="sortColumn==='author'" x-text="sortAscending ? '↑' : '↓'"></span>
+            </th>
+            <th @click="toggleSort('category')" style="cursor:pointer">
+              Category & Sub-Genre <span x-show="sortColumn==='category'" x-text="sortAscending ? '↑' : '↓'"></span>
+            </th>
+            <th>Format</th>
+            <th style="width:140px;text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="book in filteredBooks" :key="book.id">
+            <tr :style="hasOverride(book.id) ? 'background: var(--accent-soft)' : ''">
+              <td>
+                <a :href="'/web/book.html?id=' + book.id" style="font-weight:500" x-text="book.title"></a>
+              </td>
+              <td class="text-muted" x-text="book.author || '—'"></td>
+              <td>
+                <div class="flex gap-xs" style="flex-wrap: wrap;">
+                  <select class="filter-select" style="min-width:120px;padding:4px 8px;font-size:0.75rem"
+                          :value="overrides[book.id]?.category || ''"
+                          @change="setOverride(book.id, 'category', $event.target.value)">
+                    <option value="">— Category —</option>
+                    <template x-for="cat in categories" :key="cat">
+                      <option :value="cat" x-text="cat"></option>
+                    </template>
+                  </select>
+                  <select class="filter-select" style="min-width:120px;padding:4px 8px;font-size:0.75rem"
+                          :value="overrides[book.id]?.sub_genre || ''"
+                          @change="setOverride(book.id, 'sub_genre', $event.target.value)"
+                          x-show="overrides[book.id]?.category">
+                    <option value="">— Sub-Genre —</option>
+                    <template x-for="sg in getSubGenres(overrides[book.id]?.category)" :key="sg">
+                      <option :value="sg" x-text="sg"></option>
+                    </template>
+                  </select>
+                </div>
+              </td>
+              <td>
+                <span class="book-card-badge" :class="getFormatBadgeClass(book.file_format)" x-text="(book.file_format || '').toUpperCase()" style="position:static"></span>
+              </td>
+              <td style="text-align:right">
+                <div class="flex gap-sm justify-end">
+                  <button class="btn btn-secondary btn-sm" @click="classifySingle(book)" title="Auto-classify">🤖</button>
+                  <button class="btn btn-secondary btn-sm" @click="undoOverride(book.id)" x-show="hasOverride(book.id)" title="Undo changes">↩️</button>
+                </div>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="filteredBooks.length === 0">
+            <td colspan="5" class="text-center text-muted" style="padding: 2rem">No matches found for your search.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty State -->
+    <div x-show="!loading && books.length === 0" class="empty-state">
+      <div class="empty-state-icon">🎉</div>
+      <div class="empty-state-text">All books are classified!</div>
+      <div class="empty-state-sub">Check back after adding new books to the library.</div>
+    </div>
+  </main>
+</body>
+</html>

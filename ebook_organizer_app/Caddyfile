@@ -1,0 +1,46 @@
+:80 {
+    # API proxy
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Health endpoint
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # Swagger docs
+    handle /docs* {
+        reverse_proxy backend:8000
+    }
+    handle /redoc* {
+        reverse_proxy backend:8000
+    }
+    handle /openapi.json {
+        reverse_proxy backend:8000
+    }
+
+    # Static covers
+    handle /static/* {
+        reverse_proxy backend:8000
+    }
+
+    # Web UI
+    handle /web/* {
+        reverse_proxy backend:8000
+    }
+
+    # Root → redirect to web UI
+    handle / {
+        redir /web/ permanent
+    }
+
+    # Compression
+    encode gzip
+
+    # Logging
+    log {
+        output file /data/access.log
+        format json
+    }
+}

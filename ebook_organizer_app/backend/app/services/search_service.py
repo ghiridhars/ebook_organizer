@@ -61,8 +61,15 @@ def init_fts(db: Session) -> None:
         for trigger_sql in FTS_TRIGGERS:
             db.execute(text(trigger_sql))
         
+        # Optimize FTS5 index: merge b-tree segments for faster queries
+        # Safe to run on every startup; beneficial after bulk imports
+        try:
+            db.execute(text("INSERT INTO ebooks_fts(ebooks_fts) VALUES('optimize')"))
+        except Exception:
+            pass  # Optimize is best-effort; table might be empty
+
         db.commit()
-        logger.info("FTS5 search initialized successfully")
+        logger.info("FTS5 search initialized and optimized successfully")
     except Exception as e:
         logger.warning(f"FTS5 initialization warning: {e}")
         # FTS might already exist, which is fine

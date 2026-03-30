@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Reorganize your ebook library structure">
+  <title>Reorganize — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('reorganize');</script>
+
+  <main class="container fade-in" x-data="reorganizeData()">
+    <div class="page-header">
+      <h1 class="page-title">📁 Reorganize Library</h1>
+      <p class="page-subtitle">Preview and apply file organization changes</p>
+    </div>
+
+    <!-- Config Panel -->
+    <div class="card mb-lg">
+      <div class="card-title mb-md">Configuration</div>
+      <div class="form-group">
+        <label class="form-label">Destination Folder</label>
+        <input type="text" class="form-input" x-model="config.destination" placeholder="/path/to/library">
+        <div class="text-sm text-muted mt-xs">Books will be organized into Category / Sub-Genre / Author / Title.ext here</div>
+      </div>
+      
+      <div class="flex gap-lg" style="flex-wrap: wrap">
+        <div class="form-group mb-0">
+          <label class="form-label">Operation</label>
+          <div class="flex gap-md mt-sm">
+            <label style="cursor: pointer;" class="flex items-center gap-xs">
+              <input type="radio" value="move" x-model="config.operation"> Move Files
+            </label>
+            <label style="cursor: pointer;" class="flex items-center gap-xs">
+              <input type="radio" value="copy" x-model="config.operation"> Copy Files
+            </label>
+          </div>
+        </div>
+        <div class="form-group mb-0" style="padding-top: 1.5rem">
+          <label style="cursor: pointer;" class="flex items-center gap-xs">
+            <input type="checkbox" x-model="config.includeUnclassified"> Include Unclassified Books
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex items-center gap-md mb-lg" style="flex-wrap:wrap">
+      <button class="btn btn-primary" @click="loadPreview()" :disabled="loading" id="btn-preview">
+        <span x-show="loading" class="loading-spinner" style="width:14px;height:14px"></span>
+        <span x-text="loading ? 'Loading...' : '👁️ Preview Changes'"></span>
+      </button>
+
+      <template x-if="preview && preview.planned_moves.length > 0">
+        <button class="btn btn-primary" @click="applyReorganization()" :disabled="applying" id="btn-apply">
+          <span x-show="applying" class="loading-spinner" style="width:14px;height:14px"></span>
+          <span x-text="applying ? 'Applying...' : '✅ Apply Reorganization'"></span>
+        </button>
+      </template>
+    </div>
+
+    <!-- Preview Results -->
+    <template x-if="preview">
+      <div>
+        <!-- Summary Strip -->
+        <div class="card mb-lg" style="padding: 1rem 1.5rem">
+          <div class="flex gap-lg" style="flex-wrap: wrap">
+            <div>
+              <div class="text-sm text-muted">Files to <span x-text="preview.operation"></span></div>
+              <div class="font-bold text-lg" x-text="preview.total_files"></div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">Classified</div>
+              <div class="font-bold text-lg" style="color: var(--success)" x-text="preview.classified_files"></div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">Unclassified</div>
+              <div class="font-bold text-lg" style="color: var(--warning)" x-text="preview.unclassified_files"></div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">Path Collisions (Skipped)</div>
+              <div class="font-bold text-lg" style="color: var(--danger)" x-text="preview.collisions"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Proposed Changes</div>
+          </div>
+
+          <div class="table-wrapper" x-show="preview.planned_moves.length > 0">
+            <table>
+              <thead>
+                <tr>
+                  <th @click="toggleSort('title')" style="cursor:pointer; width:20%">
+                    Title <span x-show="sortColumn==='title'" x-text="sortAscending ? '↑' : '↓'"></span>
+                  </th>
+                  <th @click="toggleSort('author')" style="cursor:pointer; width:15%">
+                    Author <span x-show="sortColumn==='author'" x-text="sortAscending ? '↑' : '↓'"></span>
+                  </th>
+                  <th @click="toggleSort('category')" style="cursor:pointer; width:15%">
+                    Category <span x-show="sortColumn==='category'" x-text="sortAscending ? '↑' : '↓'"></span>
+                  </th>
+                  <th @click="toggleSort('target')" style="cursor:pointer; width:50%">
+                    Target Path <span x-show="sortColumn==='target'" x-text="sortAscending ? '↑' : '↓'"></span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="move in sortedMoves" :key="move.ebook_id">
+                  <tr>
+                    <td class="text-sm" style="font-weight: 500" x-text="move.title"></td>
+                    <td class="text-sm text-muted" x-text="move.author || '—'"></td>
+                    <td class="text-sm">
+                      <span class="tag" x-text="(move.category || 'Unclassified') + (move.sub_genre ? ` / ${move.sub_genre}` : '')"></span>
+                    </td>
+                    <td class="text-sm">
+                      <div class="diff-new" style="word-break: break-all" x-text="move.target_path"></div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="preview.planned_moves.length === 0" class="empty-state" style="padding:2rem">
+            <div class="empty-state-icon">✅</div>
+            <div class="empty-state-text">Library is already organized in this destination!</div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Initial State -->
+    <div x-show="!preview && !loading" class="empty-state">
+      <div class="empty-state-icon">📂</div>
+      <div class="empty-state-text">Click "Preview Changes" to see proposed reorganization</div>
+      <div class="empty-state-sub">Books will be organized into Category / Sub-Genre / Author / Title.ext</div>
+    </div>
+  </main>
+</body>
+</html>

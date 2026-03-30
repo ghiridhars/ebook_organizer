@@ -35,6 +35,7 @@ class Ebook(Base):
     file_format = Column(String(10), index=True)  # epub, pdf, mobi
     file_size = Column(Integer)  # bytes
     file_hash = Column(String(64))  # SHA-256 for deduplication
+    cover_path = Column(String(500), nullable=True)  # Path to cover thumbnail (WebP)
     
     # Sync State
     last_synced = Column(DateTime, default=datetime.utcnow)

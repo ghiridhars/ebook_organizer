@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="eBook Organizer — Book details and metadata">
+  <title>Book Detail — eBook Organizer</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/web/app.js"></script>
+</head>
+<body>
+  <nav class="nav" id="main-nav"></nav>
+  <script>renderNav('');</script>
+
+  <main class="container fade-in" x-data="bookDetailData()" x-init="init()">
+    <!-- Loading -->
+    <div x-show="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <span>Loading book...</span>
+    </div>
+
+    <!-- Detail Content -->
+    <template x-if="book && !loading">
+      <div>
+        <!-- Back + Actions bar -->
+        <div class="flex items-center justify-between mb-lg">
+          <a href="/web/" class="btn btn-secondary btn-sm">← Back to Library</a>
+          <div class="flex gap-sm">
+            <template x-if="canRead()">
+              <a :href="'/web/reader.html?id=' + book.id" class="btn btn-primary">📖 Read</a>
+            </template>
+            <a :href="'/api/ebooks/' + book.id + '/download'" class="btn btn-secondary">⬇️ Download</a>
+            <button class="btn btn-secondary" @click="editing ? cancelEditing() : startEditing()" x-text="editing ? 'Cancel' : '✏️ Edit'"></button>
+          </div>
+        </div>
+
+        <div class="detail-layout">
+          <!-- Cover -->
+          <div class="detail-cover">
+            <img
+              :src="getCoverUrl(book)"
+              :alt="book.title"
+              @error="$event.target.style.display='none'"
+            >
+          </div>
+
+          <!-- Info -->
+          <div>
+            <!-- View Mode -->
+            <div x-show="!editing">
+              <h1 class="page-title" x-text="book.title"></h1>
+              <p class="page-subtitle mb-lg" x-text="'by ' + (book.author || 'Unknown Author')"></p>
+
+              <div class="detail-meta">
+                <div class="meta-item">
+                  <div class="meta-label">Category</div>
+                  <div class="meta-value" x-text="book.category || '—'"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Sub-Genre</div>
+                  <div class="meta-value" x-text="book.sub_genre || '—'"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Format</div>
+                  <div class="meta-value" x-text="(book.file_format || '').toUpperCase()"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Size</div>
+                  <div class="meta-value" x-text="formatBytes(book.file_size)"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">ISBN</div>
+                  <div class="meta-value" x-text="book.isbn || '—'"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Publisher</div>
+                  <div class="meta-value" x-text="book.publisher || '—'"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Language</div>
+                  <div class="meta-value" x-text="book.language || '—'"></div>
+                </div>
+                <div class="meta-item">
+                  <div class="meta-label">Added</div>
+                  <div class="meta-value" x-text="formatDate(book.created_at)"></div>
+                </div>
+              </div>
+
+              <!-- Description -->
+              <template x-if="book.description">
+                <div class="card mt-lg">
+                  <div class="card-title mb-md">Description</div>
+                  <p class="text-sm text-muted" x-text="book.description"></p>
+                </div>
+              </template>
+
+              <!-- Tags -->
+              <div class="mt-lg">
+                <div class="card-title mb-md">Tags</div>
+                <div class="tag-list">
+                  <template x-for="tag in (book.tags || [])" :key="tag">
+                    <span class="tag" x-text="tag"></span>
+                  </template>
+                  <span x-show="!book.tags || book.tags.length === 0" class="text-sm text-muted">No tags</span>
+                </div>
+              </div>
+
+              <!-- Quick Actions -->
+              <div class="flex items-center justify-between mt-lg">
+                <div class="flex gap-sm">
+                  <button class="btn btn-secondary btn-sm" @click="reClassify()">🔄 Re-classify</button>
+                </div>
+                <div>
+                  <button class="btn btn-danger btn-sm" @click="deleteEbook()">🗑️ Delete from Index</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Edit Mode -->
+            <div x-show="editing">
+              <h2 class="page-title mb-lg">Edit Metadata</h2>
+
+              <div class="form-group">
+                <label class="form-label">Title</label>
+                <input class="form-input" x-model="form.title" id="edit-title">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Author</label>
+                <input class="form-input" x-model="form.author" id="edit-author">
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+                <div class="form-group">
+                  <label class="form-label">Category</label>
+                  <select class="form-select" x-model="form.category" @change="updateSubGenres()" id="edit-category">
+                    <option value="">— Select —</option>
+                    <template x-for="cat in Object.keys(taxonomy || {})" :key="cat">
+                      <option :value="cat" x-text="cat"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Sub-Genre</label>
+                  <select class="form-select" x-model="form.sub_genre" id="edit-subgenre">
+                    <option value="">— Select —</option>
+                    <template x-for="sg in subGenres" :key="sg">
+                      <option :value="sg" x-text="sg"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea class="form-textarea" x-model="form.description" id="edit-desc"></textarea>
+              </div>
+
+              <!-- Tag editing -->
+              <div class="form-group">
+                <label class="form-label">Tags</label>
+                <div class="tag-list mb-md">
+                  <template x-for="tag in (form.tags || [])" :key="tag">
+                    <span class="tag">
+                      <span x-text="tag"></span>
+                      <span class="tag-remove" @click="removeTag(tag)">✕</span>
+                    </span>
+                  </template>
+                </div>
+                <div class="flex gap-sm">
+                  <input class="form-input" x-model="newTag" placeholder="Add tag..." @keydown.enter.prevent="addTag()" style="max-width:200px" id="edit-newtag">
+                  <button class="btn btn-secondary btn-sm" @click="addTag()">Add</button>
+                </div>
+              </div>
+
+              <div class="flex gap-sm mt-lg">
+                <button class="btn btn-primary" @click="save()" :disabled="saving" id="btn-save">
+                  <span x-show="saving" class="loading-spinner" style="width:14px;height:14px"></span>
+                  <span x-text="saving ? 'Saving...' : '💾 Save'"></span>
+                </button>
+                <button class="btn btn-secondary" @click="cancelEditing()">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </main>
+</body>
+</html>
