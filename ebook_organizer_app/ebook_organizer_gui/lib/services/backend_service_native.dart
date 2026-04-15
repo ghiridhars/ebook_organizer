@@ -162,14 +162,39 @@ class BackendService {
     return null;
   }
 
-  /// Find the Python executable (prefer venv)
+  /// Find the Python executable (prefer venv with fastapi installed)
   String _findPythonExecutable(String backendDir) {
-    final venvPython = io.Platform.isWindows
-        ? path.join(backendDir, 'venv', 'Scripts', 'python.exe')
-        : path.join(backendDir, 'venv', 'bin', 'python');
-    
-    if (io.File(venvPython).existsSync()) {
-      return venvPython;
+    // Check multiple possible venv locations
+    final suffix = io.Platform.isWindows ? ['Scripts', 'python.exe'] : ['bin', 'python'];
+    final venvPaths = [
+      path.joinAll([backendDir, 'venv', ...suffix]),
+      path.joinAll([backendDir, '.venv', ...suffix]),
+      path.joinAll([backendDir, '..', 'venv', ...suffix]),
+      path.joinAll([backendDir, '..', '.venv', ...suffix]),
+      path.joinAll([backendDir, '..', '..', '.venv', ...suffix]),
+      path.joinAll([backendDir, '..', '..', '..', '.venv', ...suffix]),
+      path.joinAll([backendDir, '..', '..', '..', '..', '.venv', ...suffix]),
+    ];
+
+    for (final venvPython in venvPaths) {
+      final normalized = path.normalize(venvPython);
+      if (io.File(normalized).existsSync()) {
+        // Verify this venv has fastapi installed
+        try {
+          final result = io.Process.runSync(
+            normalized,
+            ['-c', 'import fastapi'],
+          );
+          if (result.exitCode == 0) {
+            _log('Found valid venv Python at: $normalized');
+            return normalized;
+          } else {
+            _log('Skipping venv at $normalized (missing fastapi)');
+          }
+        } catch (e) {
+          _log('Error checking venv at $normalized: $e');
+        }
+      }
     }
     
     return io.Platform.isWindows ? 'python' : 'python3';
