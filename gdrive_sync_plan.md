@@ -30,7 +30,7 @@ Reorganize Screen ────────────────► POST /api/
 
 ## Implementation Phases
 
-### Phase 1: Backend — Drive API Operations
+### Phase 1: Backend — Drive API Operations ✅
 
 **File:** `backend/app/services/cloud_provider_service.py`
 
@@ -45,7 +45,7 @@ Reorganize Screen ────────────────► POST /api/
 
 All methods build a Drive v3 service from stored OAuth credentials, auto-refreshing tokens as needed.
 
-### Phase 2: Backend — Drive Sync Flow
+### Phase 2: Backend — Drive Sync Flow ✅
 
 **File:** `backend/app/services/sync_service.py`
 
@@ -65,7 +65,7 @@ Add `sync_google_drive(folder_id, full_sync, db)`:
 
 Extend `POST /api/sync/trigger` to accept `provider="google_drive"` + `folder_id`.
 
-### Phase 3: Backend — Drive Folder Browser & Reorganize
+### Phase 3: Backend — Drive Folder Browser & Reorganize ✅
 
 **File:** `backend/app/routes/cloud.py`
 
@@ -82,7 +82,7 @@ Extend `execute_reorganization()`:
   - `move_file(file_id, target_folder_id)` instead of `shutil.move()`
   - Update DB `cloud_file_path` with new Drive path
 
-### Phase 4: Flutter — Source Toggle & Folder Browser
+### Phase 4: Flutter — Source Toggle & Folder Browser ✅
 
 **File:** `ebook_organizer_gui/lib/screens/local_library_screen.dart`
 
@@ -106,12 +106,12 @@ Extend `execute_reorganization()`:
 - Extend `scanLibrary()` to call Drive sync when source is GDrive
 - `triggerSync()` passes provider type to backend
 
-### Phase 5: Incremental Sync & Polish
+### Phase 5: Incremental Sync & Polish ✅
 
-- Compare `modifiedTime` from Drive API vs `last_synced` on DB record — skip unchanged files
-- Token auto-refresh before each Drive API call
-- Rate limiting with exponential backoff (Drive quota: 1000 req/100s)
-- Error handling for revoked permissions, network failures
+- ✅ Compare `modifiedTime` from Drive API vs `cloud_modified_time` on DB record — skip unchanged files
+- ✅ Token auto-refresh before each Drive API call (with callback to persist new tokens)
+- ✅ Rate limiting with exponential backoff via tenacity (3 attempts, 1-30s backoff, retries on 429/5xx)
+- ✅ Typed error handling: `DriveApiError` → `DriveAuthError`, `DriveRateLimitError`, `DriveNotFoundError`
 
 ## File Change Summary
 
@@ -128,11 +128,12 @@ Extend `execute_reorganization()`:
 | `gui/lib/widgets/drive_folder_browser.dart` | New — folder picker widget |
 | `gui/lib/services/api_service.dart` | Small — add folder/file listing API calls |
 
-## Dependencies (already in requirements.txt)
+## Dependencies (in requirements.txt)
 
 - `google-api-python-client==2.116.0`
 - `google-auth==2.27.0`
 - `google-auth-oauthlib==1.2.0`
+- `tenacity>=8.2.0`
 
 ## API Contracts
 

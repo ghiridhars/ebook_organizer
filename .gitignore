@@ -28,7 +28,12 @@ instance/
 
 # SQLite
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
+
+# Google Drive credentials (secrets)
+credentials_google.json
 
 # IDE
 .idea/
