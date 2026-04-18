@@ -17,6 +17,7 @@ router = APIRouter()
 def _get_authenticated_adapter(provider: str, db: Session):
     """Load stored credentials and return a ready-to-use provider adapter.
 
+    Checks token freshness and refreshes if needed, persisting new tokens.
     Raises HTTPException if the provider is unknown or not authenticated.
     """
     if provider not in list_providers():
@@ -30,7 +31,20 @@ def _get_authenticated_adapter(provider: str, db: Session):
         )
 
     adapter = get_provider(provider)
-    adapter.set_credentials(json.loads(config.credentials_encrypted))
+    token_data = json.loads(config.credentials_encrypted)
+    adapter.set_credentials(token_data)
+
+    # Attach a refresh callback so Drive methods can persist refreshed tokens
+    def _on_token_refresh(new_token_data: dict):
+        merged = {**token_data, **new_token_data}
+        config.credentials_encrypted = json.dumps(merged)
+        adapter.set_credentials(merged)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    adapter._token_refresh_callback = _on_token_refresh
     return adapter
 
 @router.get("/providers", response_model=List[CloudProviderStatus])
