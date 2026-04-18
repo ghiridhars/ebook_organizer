@@ -19,6 +19,8 @@ from app.services.organization_service import (
 from app.services.file_organizer_service import (
     generate_reorganize_plan,
     execute_reorganization,
+    generate_drive_reorganize_plan,
+    execute_drive_reorganization,
 )
 from app.models import EbookResponse
 
@@ -311,15 +313,26 @@ async def reorganize_preview(
 
     Returns a list of planned source -> target path mappings
     based on the Category/SubGenre/Author folder structure.
+
+    For Google Drive, use destination format: "google_drive:<folder_id>"
     """
     try:
-        plan = generate_reorganize_plan(
-            db,
-            destination=request.destination,
-            source_path=request.source_path,
-            include_unclassified=request.include_unclassified,
-            operation=request.operation,
-        )
+        # Check if this is a Drive reorganization
+        if request.destination.startswith("google_drive:"):
+            folder_id = request.destination.split(":", 1)[1]
+            plan = generate_drive_reorganize_plan(
+                db,
+                destination_folder_id=folder_id,
+                include_unclassified=request.include_unclassified,
+            )
+        else:
+            plan = generate_reorganize_plan(
+                db,
+                destination=request.destination,
+                source_path=request.source_path,
+                include_unclassified=request.include_unclassified,
+                operation=request.operation,
+            )
         return ReorganizePreviewResponse(
             destination=plan.destination,
             operation=plan.operation,
@@ -354,15 +367,26 @@ async def reorganize(
 
     Moves/copies files into Category/SubGenre/Author folder structure
     and updates database paths for moved files.
+
+    For Google Drive, use destination format: "google_drive:<folder_id>"
     """
     try:
-        result = execute_reorganization(
-            db,
-            destination=request.destination,
-            source_path=request.source_path,
-            include_unclassified=request.include_unclassified,
-            operation=request.operation,
-        )
+        # Check if this is a Drive reorganization
+        if request.destination.startswith("google_drive:"):
+            folder_id = request.destination.split(":", 1)[1]
+            result = await execute_drive_reorganization(
+                db,
+                destination_folder_id=folder_id,
+                include_unclassified=request.include_unclassified,
+            )
+        else:
+            result = execute_reorganization(
+                db,
+                destination=request.destination,
+                source_path=request.source_path,
+                include_unclassified=request.include_unclassified,
+                operation=request.operation,
+            )
         return ReorganizeResponse(
             total_processed=result.total_processed,
             succeeded=result.succeeded,

@@ -1,14 +1,15 @@
 """
 Synchronization Service
-Handles syncing local files to the database.
+Handles syncing local files and Google Drive files to the database.
 """
 
 import os
 import logging
+import tempfile
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.models.database import Ebook
+from app.models.database import Ebook, CloudConfig, SyncLog
 from app.models.schemas import SyncResponse
 from app.services.metadata_service import metadata_service
 
@@ -184,5 +185,215 @@ class SyncService:
         except Exception as e:
             logger.error(f"Failed to process {file_path}: {e}")
             self._status["books_failed"] += 1
+
+    # ----- Google Drive sync -------------------------------------------
+
+    async def sync_google_drive(
+        self, folder_id: str, full_sync: bool, db: Session
+    ) -> SyncResponse:
+        """Sync ebooks from a Google Drive folder into the database.
+
+        1. List ebook files in the Drive folder
+        2. For each file not yet in DB (by cloud_file_id):
+           a. Download to a temp path
+           b. Extract metadata
+           c. Classify
+           d. Create Ebook record
+           e. Delete temp file
+        3. Log results to SyncLog
+        """
+        import json
+        from app.services.cloud_provider_service import get_provider
+
+        self._reset_status()
+        self._update_status(stage="connecting to Google Drive")
+        start_time = datetime.now()
+
+        # Load stored OAuth tokens
+        config = db.query(CloudConfig).filter(
+            CloudConfig.provider == "google_drive"
+        ).first()
+        if not config or not config.is_authenticated:
+            return SyncResponse(
+                status="failed",
+                provider="google_drive",
+                books_processed=0,
+                books_added=0,
+                books_updated=0,
+                books_failed=0,
+                duration_seconds=0.0,
+                error_message="Google Drive is not authenticated. Connect it first.",
+            )
+
+        try:
+            adapter = get_provider("google_drive")
+            adapter.set_credentials(json.loads(config.credentials_encrypted))
+
+            # List ebook files in the selected folder
+            self._update_status(stage="listing files on Drive")
+            cloud_files = await adapter.list_files(folder_path=folder_id)
+            logger.info(f"Found {len(cloud_files)} ebook(s) in Drive folder {folder_id}")
+
+            for cf in cloud_files:
+                self._update_status(
+                    stage="processing file",
+                    current_file=cf.name,
+                )
+
+                try:
+                    # Dedup check by cloud_file_id
+                    existing = db.query(Ebook).filter(
+                        Ebook.cloud_file_id == cf.file_id
+                    ).first()
+
+                    if existing and not full_sync:
+                        self._status["books_processed"] += 1
+                        continue
+
+                    # Download to temp for metadata extraction
+                    ext = os.path.splitext(cf.name)[1].lower()
+                    self._update_status(stage="downloading for metadata")
+
+                    with tempfile.NamedTemporaryFile(
+                        suffix=ext, delete=False
+                    ) as tmp:
+                        tmp_path = tmp.name
+
+                    try:
+                        await adapter.download_file(cf.file_id, tmp_path)
+
+                        # Extract metadata
+                        self._update_status(stage="extracting metadata")
+                        metadata = await metadata_service.read_metadata(tmp_path)
+
+                        # Classify
+                        category = None
+                        sub_genre = None
+                        try:
+                            from app.services.metadata_classifier import classify_book
+                            result = classify_book(tmp_path, metadata)
+                            if result:
+                                category = result.get("category")
+                                sub_genre = result.get("sub_genre")
+                        except Exception as cls_err:
+                            logger.warning(
+                                f"Classification failed for {cf.name}: {cls_err}"
+                            )
+                    finally:
+                        # Always clean up temp file
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+
+                    if existing:
+                        # Full sync: update existing record
+                        if metadata:
+                            existing.title = metadata.title or existing.title
+                            existing.author = metadata.author or existing.author
+                            existing.description = metadata.description or existing.description
+                            existing.publisher = metadata.publisher or existing.publisher
+                            existing.language = metadata.language or existing.language
+                            existing.published_date = metadata.date or existing.published_date
+                        if category:
+                            existing.category = category
+                        if sub_genre:
+                            existing.sub_genre = sub_genre
+                        existing.file_size = cf.size
+                        existing.last_synced = datetime.now()
+                        existing.sync_status = "synced"
+                        self._status["books_updated"] += 1
+                    else:
+                        # New book
+                        ebook_kwargs = dict(
+                            title=cf.name,
+                            file_format=ext.lstrip("."),
+                            file_size=cf.size,
+                            cloud_provider="google_drive",
+                            cloud_file_id=cf.file_id,
+                            cloud_file_path=cf.path,
+                            category=category,
+                            sub_genre=sub_genre,
+                            is_synced=True,
+                            sync_status="synced",
+                            last_synced=datetime.now(),
+                        )
+                        if metadata:
+                            ebook_kwargs.update(
+                                title=metadata.title or cf.name,
+                                author=metadata.author or "Unknown",
+                                description=metadata.description,
+                                publisher=metadata.publisher,
+                                language=metadata.language,
+                                published_date=metadata.date,
+                            )
+
+                        db.add(Ebook(**ebook_kwargs))
+                        self._status["books_added"] += 1
+
+                    self._status["books_processed"] += 1
+
+                except Exception as file_err:
+                    logger.error(f"Failed to process Drive file {cf.name}: {file_err}")
+                    self._status["books_failed"] += 1
+                    self._status["books_processed"] += 1
+
+            db.commit()
+            duration = (datetime.now() - start_time).total_seconds()
+
+            # Write audit log
+            sync_log = SyncLog(
+                cloud_provider="google_drive",
+                operation="full_sync" if full_sync else "incremental",
+                status="success",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                completed_at=datetime.now(),
+                duration_seconds=duration,
+            )
+            db.add(sync_log)
+            db.commit()
+
+            # Update CloudConfig last_sync and folder_path
+            config.last_sync = datetime.now()
+            config.folder_path = folder_id
+            db.commit()
+
+            self._update_status(
+                is_active=False,
+                status="completed",
+                stage=None,
+                current_file=None,
+            )
+
+            return SyncResponse(
+                status="completed",
+                provider="google_drive",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                duration_seconds=duration,
+            )
+
+        except Exception as e:
+            logger.error(f"Google Drive sync failed: {e}")
+            db.rollback()
+            duration = (datetime.now() - start_time).total_seconds()
+            self._update_status(
+                is_active=False,
+                status="failed",
+                stage=str(e),
+            )
+            return SyncResponse(
+                status="failed",
+                provider="google_drive",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                duration_seconds=duration,
+                error_message=str(e),
+            )
 
 sync_service = SyncService()

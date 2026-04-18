@@ -5,16 +5,22 @@ Provides ebook file reorganization capabilities:
 - Compute target paths based on Category/SubGenre/Author folder structure
 - Generate a preview of planned file moves/copies
 - Execute move/copy operations with DB path updates
+- Google Drive reorganization via Drive API (create folders + move files)
 """
 
+import asyncio
+import json
+import logging
 import os
 import shutil
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
-from app.models.database import Ebook
+from app.models.database import Ebook, CloudConfig
 from app.services.metadata_classifier import is_valid_author, clean_author_name
+
+logger = logging.getLogger(__name__)
 
 
 UNKNOWN_AUTHOR = "Unknown Author"
@@ -260,6 +266,201 @@ def execute_reorganization(
                 ebook.cloud_file_id = target
 
             result.path_mappings[old_path] = target
+            result.succeeded += 1
+            result.total_processed += 1
+
+        except Exception as e:
+            result.failed += 1
+            result.total_processed += 1
+            result.errors.append(f"{ebook.title}: {str(e)}")
+
+    if result.succeeded > 0:
+        db.commit()
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Google Drive reorganization
+# ---------------------------------------------------------------------------
+
+
+def _compute_drive_folder_path(ebook: Ebook) -> Optional[List[str]]:
+    """Return the folder hierarchy for a Drive ebook as a list of folder names.
+
+    Classified:   [Category, SubGenre, Author]
+    Unclassified: [Unclassified]
+    Returns None if the ebook should be skipped.
+    """
+    classified = _is_classified(ebook)
+    if classified:
+        category = _sanitize_folder_name(ebook.category)
+        sub_genre = _sanitize_folder_name(ebook.sub_genre)
+        author = _get_author_folder(ebook)
+        return [category, sub_genre, author]
+    else:
+        return [UNCLASSIFIED_FOLDER]
+
+
+async def _get_or_create_folder(
+    adapter,
+    parent_id: str,
+    name: str,
+    cache: Dict[str, str],
+) -> str:
+    """Find or create a folder under *parent_id*. Uses a cache to avoid
+    duplicate creation within a single reorganization run.
+    """
+    cache_key = f"{parent_id}/{name}"
+    if cache_key in cache:
+        return cache[cache_key]
+
+    # Check if folder already exists on Drive
+    existing = await adapter.list_folders(parent_id=parent_id)
+    for f in existing:
+        if f.name == name:
+            cache[cache_key] = f.folder_id
+            return f.folder_id
+
+    # Create it
+    folder_id = await adapter.create_folder(name, parent_id)
+    cache[cache_key] = folder_id
+    return folder_id
+
+
+async def _ensure_drive_folder_path(
+    adapter,
+    root_folder_id: str,
+    path_parts: List[str],
+    cache: Dict[str, str],
+) -> str:
+    """Create (or find) each level of the folder hierarchy under root.
+
+    Returns the ID of the deepest folder.
+    """
+    current_parent = root_folder_id
+    for part in path_parts:
+        current_parent = await _get_or_create_folder(
+            adapter, current_parent, part, cache
+        )
+    return current_parent
+
+
+def generate_drive_reorganize_plan(
+    db: Session,
+    destination_folder_id: str,
+    include_unclassified: bool = False,
+) -> ReorganizePlan:
+    """Generate a preview plan for Drive-based reorganization.
+
+    Unlike local reorganization, we don't do collision detection
+    (Drive allows same-name files in a folder).
+    """
+    plan = ReorganizePlan(
+        destination=f"google_drive:{destination_folder_id}",
+        operation="move",
+    )
+
+    ebooks = db.query(Ebook).filter(
+        Ebook.cloud_provider == "google_drive"
+    ).all()
+
+    for ebook in ebooks:
+        if not ebook.cloud_file_id:
+            continue
+
+        classified = _is_classified(ebook)
+        if not classified and not include_unclassified:
+            continue
+
+        path_parts = _compute_drive_folder_path(ebook)
+        if not path_parts:
+            continue
+
+        target_display = "/".join(path_parts) + "/" + (ebook.title or ebook.cloud_file_id)
+
+        move = PlannedMove(
+            ebook_id=ebook.id,
+            source_path=ebook.cloud_file_path or ebook.cloud_file_id,
+            target_path=target_display,
+            title=ebook.title or os.path.basename(ebook.cloud_file_path or ""),
+            author=_get_author_folder(ebook),
+            category=ebook.category or "",
+            sub_genre=ebook.sub_genre or "",
+        )
+        plan.planned_moves.append(move)
+
+        if classified:
+            plan.classified_files += 1
+        else:
+            plan.unclassified_files += 1
+
+    plan.total_files = len(plan.planned_moves)
+    return plan
+
+
+async def execute_drive_reorganization(
+    db: Session,
+    destination_folder_id: str,
+    include_unclassified: bool = False,
+) -> ReorganizeResult:
+    """Move Google Drive ebooks into Category/SubGenre/Author folders on Drive.
+
+    Creates the folder hierarchy via the Drive API, then moves each file.
+    Updates the DB cloud_file_path with the new logical path.
+    """
+    from app.services.cloud_provider_service import get_provider
+
+    result = ReorganizeResult()
+
+    # Load credentials
+    config = db.query(CloudConfig).filter(
+        CloudConfig.provider == "google_drive"
+    ).first()
+    if not config or not config.is_authenticated:
+        result.errors.append("Google Drive is not authenticated.")
+        return result
+
+    adapter = get_provider("google_drive")
+    adapter.set_credentials(json.loads(config.credentials_encrypted))
+
+    # Cache to avoid re-creating folders within one run
+    folder_cache: Dict[str, str] = {}
+
+    ebooks = db.query(Ebook).filter(
+        Ebook.cloud_provider == "google_drive"
+    ).all()
+
+    for ebook in ebooks:
+        try:
+            if not ebook.cloud_file_id:
+                result.skipped += 1
+                continue
+
+            classified = _is_classified(ebook)
+            if not classified and not include_unclassified:
+                result.skipped += 1
+                continue
+
+            path_parts = _compute_drive_folder_path(ebook)
+            if not path_parts:
+                result.skipped += 1
+                continue
+
+            # Create folder hierarchy on Drive
+            target_folder_id = await _ensure_drive_folder_path(
+                adapter, destination_folder_id, path_parts, folder_cache
+            )
+
+            # Move the file
+            old_path = ebook.cloud_file_path or ebook.cloud_file_id
+            await adapter.move_file(ebook.cloud_file_id, target_folder_id)
+
+            # Update DB
+            new_path = "/".join(path_parts) + "/" + os.path.basename(old_path)
+            ebook.cloud_file_path = new_path
+
+            result.path_mappings[old_path] = new_path
             result.succeeded += 1
             result.total_processed += 1
 
