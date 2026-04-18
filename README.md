@@ -8,8 +8,8 @@ A cross-platform desktop ebook organizer with metadata extraction, taxonomy-base
 
 - **Frontend**: Flutter (Windows, Linux, Web) — Material Design 3 with light/dark theme
 - **Backend**: FastAPI (Python) — metadata extraction, classification, file organization, local folder sync
+- **Cloud**: Google Drive integration (OAuth, folder browsing, sync, incremental updates); OneDrive scaffolded
 - **Database**: SQLite with FTS5 full-text search (backend) + sqflite (frontend local cache)
-- **Cloud**: Google Drive & OneDrive integration (scaffolded, OAuth not yet implemented)
 
 The Flutter app **auto-starts the Python backend** as a child process on launch (desktop platforms).
 
@@ -29,9 +29,9 @@ The Flutter app **auto-starts the Python backend** as a child process on launch 
 - Light/dark theme with persistence
 - Responsive Material Design 3 UI
 
-### Not Yet Implemented
-- Google Drive / OneDrive OAuth authentication
-- Cloud file sync (local scan works; cloud sync endpoints are scaffolded)
+- Google Drive integration — OAuth sign-in, folder browsing, cloud sync with incremental updates
+- Token auto-refresh, exponential backoff retry, and typed error handling for Drive API
+- Local/Google Drive source toggle in the library UI
 
 ## Quick Start
 
@@ -125,9 +125,9 @@ ebook_organizer_app/
 │   │   │   └── schemas.py     # Pydantic request/response schemas
 │   │   ├── routes/
 │   │   │   ├── ebooks.py      # CRUD, search, stats
-│   │   │   ├── cloud.py       # Cloud provider status
+│   │   │   ├── cloud.py       # Cloud providers, OAuth, Drive folder/file browsing
 │   │   │   ├── metadata.py    # Read/write/classify metadata
-│   │   │   ├── sync.py        # Local folder sync
+│   │   │   ├── sync.py        # Local folder + Google Drive sync
 │   │   │   ├── conversion.py  # MOBI→EPUB conversion
 │   │   │   └── organization.py # Taxonomy, classification, file reorganization
 │   │   └── services/
@@ -137,7 +137,8 @@ ebook_organizer_app/
 │   │       ├── taxonomy.py           # Category/SubGenre taxonomy tree
 │   │       ├── organization_service.py # Batch classify, browse, stats
 │   │       ├── file_organizer_service.py # File move/copy reorganization
-│   │       ├── sync_service.py       # Local folder scan + DB insert
+│   │       ├── sync_service.py       # Local folder scan + Google Drive sync
+│   │       ├── cloud_provider_service.py # Google Drive / OneDrive API operations
 │   │       ├── search_service.py     # FTS5 full-text search
 │   │       └── openlibrary_service.py # Open Library API integration
 │   ├── tests/                  # pytest tests
@@ -153,7 +154,7 @@ ebook_organizer_app/
 │   │   ├── providers/         # EbookProvider, LibraryProvider, LocalLibraryProvider, ThemeProvider
 │   │   ├── screens/           # Home, LocalLibrary, EbookDetail, Classification, Reorganize
 │   │   ├── services/          # API, Backend, Database, Metadata, Conversion, LocalLibrary
-│   │   └── widgets/           # EbookCard, Grid, SearchBar, FilterChips, StatsDashboard, Skeletons
+│   │   └── widgets/           # EbookCard, Grid, SearchBar, FilterChips, StatsDashboard, DriveFolderBrowser
 │   └── pubspec.yaml
 │
 ├── docker-compose.yml         # Docker orchestration
@@ -182,8 +183,11 @@ Once the backend is running, interactive docs are at:
 | Ebooks | DELETE | `/api/ebooks/{id}` | Delete from local DB |
 | Ebooks | GET | `/api/ebooks/stats/library` | Library statistics |
 | Cloud | GET | `/api/cloud/providers` | Cloud provider status |
-| Cloud | POST | `/api/cloud/providers/{provider}/authenticate` | Initiate OAuth (not yet implemented) |
+| Cloud | POST | `/api/cloud/providers/{provider}/authenticate` | Initiate OAuth flow (returns auth URL) |
+| Cloud | GET | `/api/cloud/providers/{provider}/callback` | OAuth callback — exchange code for tokens |
 | Cloud | POST | `/api/cloud/providers/{provider}/disconnect` | Disconnect provider |
+| Cloud | GET | `/api/cloud/providers/{provider}/folders` | List Drive folders (folder browser) |
+| Cloud | GET | `/api/cloud/providers/{provider}/files` | List ebook files in a Drive folder |
 | Metadata | GET | `/api/metadata/read` | Read ebook metadata from file |
 | Metadata | PUT | `/api/metadata/write` | Write metadata to file (EPUB/PDF) |
 | Metadata | GET | `/api/metadata/supported-formats` | Supported formats & capabilities |
@@ -226,8 +230,12 @@ DATABASE_URL=sqlite:///./ebook_organizer.db
 SUPPORTED_FORMATS=["epub","pdf","mobi","azw","azw3","fb2"]
 MAX_FILE_SIZE_MB=100
 
-# Cloud (not yet functional)
+# Cloud (Google Drive)
 GOOGLE_DRIVE_CREDENTIALS_FILE=credentials_google.json
+# Download OAuth 2.0 credentials JSON from Google Cloud Console
+# and place it at the path above (relative to backend dir)
+
+# Cloud (OneDrive — not yet implemented)
 ONEDRIVE_CLIENT_ID=
 ONEDRIVE_CLIENT_SECRET=
 ```
@@ -271,6 +279,8 @@ The backend uses structured logging with console output, JSON file logs, and a s
 - Pydantic 2.x + pydantic-settings
 - ebooklib, pypdf, mobi (metadata extraction)
 - Open Library API (metadata enrichment)
+- Google API Client + google-auth (Drive integration)
+- tenacity (retry with exponential backoff)
 - SQLite FTS5 (full-text search)
 
 ## Troubleshooting
@@ -289,10 +299,18 @@ The backend uses structured logging with console output, JSON file logs, and a s
 - Delete `ebook_organizer.db` to reset
 - Check file permissions
 
+### Google Drive Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
+2. Create an **OAuth 2.0 Client ID** (type: Desktop app)
+3. Enable the **Google Drive API** under APIs & Services → Enabled APIs
+4. Download the credentials JSON and save as `backend/credentials_google.json`
+5. If the app is in "Testing" mode, add your email as a test user under OAuth consent screen
+6. Restart the backend, then click "Sign in with Google" in the app
+
 ## Contributing
 
 Areas that need work:
-1. Google Drive / OneDrive OAuth implementation
-2. Cloud file sync (backend endpoints are scaffolded)
+1. OneDrive OAuth implementation
+2. Drive reorganization (move files into Category/SubGenre/Author on Drive)
 3. Additional ebook format support
 4. UI/UX improvements

@@ -336,6 +336,9 @@ class GoogleDriveProvider(CloudProviderBase):
 
     def get_auth_url(self) -> str:
         if not self._client_id:
+            # Re-try loading in case the file was placed after startup
+            self._load_client_credentials()
+        if not self._client_id:
             raise RuntimeError(
                 "Google OAuth credentials not configured. "
                 "Place a credentials JSON file at "

@@ -284,7 +284,8 @@ class ApiService {
     }
   }
 
-  Future<void> authenticateProvider(String provider) async {
+  /// Initiate OAuth — returns the auth URL the user must visit.
+  Future<String> authenticateProvider(String provider) async {
     final response = await _post(
       '/api/cloud/providers/$provider/authenticate',
     );
@@ -292,6 +293,23 @@ class ApiService {
     if (response.statusCode != 200) {
       throw ApiException(
         'Failed to authenticate provider',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+    final data = json.decode(response.body);
+    return data['auth_url'] as String;
+  }
+
+  /// Exchange the OAuth authorization code for tokens.
+  Future<void> exchangeOAuthCode(String provider, String code) async {
+    final response = await _get(
+      '/api/cloud/providers/$provider/callback?code=${Uri.encodeComponent(code)}',
+    );
+
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Failed to exchange authorization code',
         statusCode: response.statusCode,
         responseBody: response.body,
       );

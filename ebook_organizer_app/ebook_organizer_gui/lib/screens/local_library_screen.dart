@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/local_library_provider.dart';
 import '../models/local_ebook.dart';
 import '../widgets/local_library_widget.dart';
@@ -433,8 +434,64 @@ class _DriveConnectScreen extends StatelessWidget {
               onPressed: () async {
                 try {
                   final api = ApiService();
-                  await api.authenticateProvider('google_drive');
+                  final authUrl = await api.authenticateProvider('google_drive');
+
+                  // Open the Google consent page in the browser
+                  final uri = Uri.parse(authUrl);
+                  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+                    throw Exception('Could not open browser');
+                  }
+
+                  if (!context.mounted) return;
+
+                  // Show dialog for user to paste the authorization code
+                  final code = await showDialog<String>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (ctx) {
+                      final controller = TextEditingController();
+                      return AlertDialog(
+                        title: const Text('Paste Authorization Code'),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'After signing in with Google, copy the authorization '
+                              'code from the browser and paste it below.',
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: controller,
+                              decoration: const InputDecoration(
+                                labelText: 'Authorization code',
+                                border: OutlineInputBorder(),
+                              ),
+                              autofocus: true,
+                              onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(null),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+                            child: const Text('Connect'),
+                          ),
+                        ],
+                      );
+                    },
+                  );
+
+                  if (code == null || code.isEmpty) return;
+
+                  // Exchange the code for tokens
+                  await api.exchangeOAuthCode('google_drive', code);
                   await provider.checkDriveAuth();
+
                   if (context.mounted && provider.isDriveAuthenticated) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
