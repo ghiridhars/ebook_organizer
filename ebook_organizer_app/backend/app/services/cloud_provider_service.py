@@ -7,6 +7,7 @@ plus concrete scaffolds for Google Drive and OneDrive using OAuth 2.0.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -45,6 +46,23 @@ class CloudFile:
         return f"<CloudFile({self.name!r}, {self.size} bytes)>"
 
 
+class CloudFolder:
+    """Lightweight representation of a folder in a cloud provider."""
+
+    def __init__(
+        self,
+        folder_id: str,
+        name: str,
+        parent_id: str = "root",
+    ):
+        self.folder_id = folder_id
+        self.name = name
+        self.parent_id = parent_id
+
+    def __repr__(self) -> str:
+        return f"<CloudFolder({self.name!r}, id={self.folder_id!r})>"
+
+
 # ---------------------------------------------------------------------------
 # Abstract base class
 # ---------------------------------------------------------------------------
@@ -53,6 +71,13 @@ class CloudProviderBase(ABC):
     """Interface that every cloud provider adapter must implement."""
 
     provider_name: str = ""
+
+    def __init__(self) -> None:
+        self._token_data: Optional[Dict] = None
+
+    def set_credentials(self, token_data: Dict) -> None:
+        """Store OAuth token data for subsequent API calls."""
+        self._token_data = token_data
 
     @abstractmethod
     def get_auth_url(self) -> str:
@@ -79,6 +104,11 @@ class CloudProviderBase(ABC):
         ...
 
     @abstractmethod
+    async def list_folders(self, parent_id: str = "root") -> List[CloudFolder]:
+        """List subfolders of the given parent folder."""
+        ...
+
+    @abstractmethod
     async def download_file(self, file_id: str, dest_path: str) -> str:
         """Download a file to *dest_path* and return the local path."""
         ...
@@ -88,14 +118,32 @@ class CloudProviderBase(ABC):
         """Upload a local file to the cloud folder."""
         ...
 
+    @abstractmethod
+    async def create_folder(self, name: str, parent_id: str = "root") -> str:
+        """Create a folder on the cloud provider. Return the new folder ID."""
+        ...
+
+    @abstractmethod
+    async def move_file(self, file_id: str, new_parent_id: str) -> Dict:
+        """Move a file to a different folder. Return updated file metadata."""
+        ...
+
+    @abstractmethod
+    async def get_file_metadata(self, file_id: str) -> CloudFile:
+        """Get metadata (name, size, mimeType, modifiedTime) for a file."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Google Drive scaffold
 # ---------------------------------------------------------------------------
 
-_GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly"
+_GOOGLE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# Ebook file extensions to search for on Drive
+_EBOOK_EXTENSIONS = [".epub", ".pdf", ".mobi"]
 
 
 class GoogleDriveProvider(CloudProviderBase):
@@ -104,6 +152,7 @@ class GoogleDriveProvider(CloudProviderBase):
     provider_name = "google_drive"
 
     def __init__(self) -> None:
+        super().__init__()
         self._credentials: Optional[Dict] = None
         self._load_client_credentials()
 
@@ -137,7 +186,29 @@ class GoogleDriveProvider(CloudProviderBase):
         uris = (self._credentials or {}).get("redirect_uris", [])
         return uris[0] if uris else "http://localhost:8000/api/cloud/google/callback"
 
-    # -- public API ------------------------------------------------------
+    def _build_drive_service(self):
+        """Build an authenticated Google Drive v3 service from stored tokens."""
+        if not self._token_data:
+            raise RuntimeError(
+                "No OAuth tokens configured. "
+                "Call set_credentials() with stored token data first."
+            )
+
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=self._token_data.get("access_token"),
+            refresh_token=self._token_data.get("refresh_token"),
+            token_uri=_GOOGLE_TOKEN_URL,
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            scopes=_GOOGLE_SCOPES,
+        )
+
+        return build("drive", "v3", credentials=creds)
+
+    # -- public API (auth) -----------------------------------------------
 
     def get_auth_url(self) -> str:
         if not self._client_id:
@@ -152,7 +223,7 @@ class GoogleDriveProvider(CloudProviderBase):
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
             "response_type": "code",
-            "scope": _GOOGLE_SCOPES,
+            "scope": " ".join(_GOOGLE_SCOPES),
             "access_type": "offline",
             "prompt": "consent",
         }
@@ -191,21 +262,231 @@ class GoogleDriveProvider(CloudProviderBase):
             resp.raise_for_status()
             return resp.json()
 
+    # -- public API (Drive operations) -----------------------------------
+
     async def list_files(
         self,
         folder_path: Optional[str] = None,
         file_types: Optional[List[str]] = None,
     ) -> List[CloudFile]:
-        # TODO: implement paging through Drive API v3 /files endpoint
-        logger.info("GoogleDriveProvider.list_files is not yet fully implemented")
-        return []
+        """List ebook files in a Drive folder, with pagination.
+
+        Args:
+            folder_path: Drive folder ID (defaults to "root").
+            file_types: Optional list of extensions (e.g. [".epub", ".pdf"]).
+                        Defaults to all supported ebook extensions.
+        """
+        service = self._build_drive_service()
+        folder_id = folder_path or "root"
+
+        extensions = file_types or _EBOOK_EXTENSIONS
+        ext_filter = " or ".join(f"name contains '{ext}'" for ext in extensions)
+        query = (
+            f"'{folder_id}' in parents "
+            f"and trashed = false "
+            f"and ({ext_filter})"
+        )
+
+        files: List[CloudFile] = []
+        page_token: Optional[str] = None
+
+        while True:
+            def _list(pt=page_token):
+                return service.files().list(
+                    q=query,
+                    fields="nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)",
+                    pageSize=100,
+                    pageToken=pt,
+                    orderBy="name",
+                ).execute()
+
+            results = await asyncio.to_thread(_list)
+
+            for f in results.get("files", []):
+                modified = None
+                if f.get("modifiedTime"):
+                    modified = datetime.fromisoformat(
+                        f["modifiedTime"].replace("Z", "+00:00")
+                    )
+                parent = f.get("parents", [folder_id])[0]
+                files.append(CloudFile(
+                    file_id=f["id"],
+                    name=f["name"],
+                    path=f"{parent}/{f['name']}",
+                    mime_type=f.get("mimeType", ""),
+                    size=int(f.get("size", 0)),
+                    modified_at=modified,
+                ))
+
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+        logger.info(f"Listed {len(files)} ebook(s) in Drive folder {folder_id}")
+        return files
+
+    async def list_folders(self, parent_id: str = "root") -> List[CloudFolder]:
+        """List subfolders of the given parent folder on Drive."""
+        service = self._build_drive_service()
+
+        query = (
+            f"'{parent_id}' in parents "
+            "and mimeType = 'application/vnd.google-apps.folder' "
+            "and trashed = false"
+        )
+
+        folders: List[CloudFolder] = []
+        page_token: Optional[str] = None
+
+        while True:
+            def _list(pt=page_token):
+                return service.files().list(
+                    q=query,
+                    fields="nextPageToken, files(id, name, parents)",
+                    pageSize=100,
+                    pageToken=pt,
+                    orderBy="name",
+                ).execute()
+
+            results = await asyncio.to_thread(_list)
+
+            for f in results.get("files", []):
+                p_id = f.get("parents", [parent_id])[0] if f.get("parents") else parent_id
+                folders.append(CloudFolder(
+                    folder_id=f["id"],
+                    name=f["name"],
+                    parent_id=p_id,
+                ))
+
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+        logger.info(f"Listed {len(folders)} subfolder(s) under {parent_id}")
+        return folders
 
     async def download_file(self, file_id: str, dest_path: str) -> str:
-        logger.info("GoogleDriveProvider.download_file is not yet fully implemented")
-        return dest_path
+        """Download a Drive file to *dest_path* for temporary metadata extraction."""
+        service = self._build_drive_service()
+
+        def _download():
+            from googleapiclient.http import MediaIoBaseDownload
+            import io
+
+            request = service.files().get_media(fileId=file_id)
+            with open(dest_path, "wb") as fh:
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    _status, done = downloader.next_chunk()
+            return dest_path
+
+        result = await asyncio.to_thread(_download)
+        logger.info(f"Downloaded Drive file {file_id} → {dest_path}")
+        return result
 
     async def upload_file(self, local_path: str, cloud_folder: str) -> CloudFile:
-        raise NotImplementedError("Upload to Google Drive is not yet implemented")
+        """Upload a local file to a Drive folder."""
+        service = self._build_drive_service()
+
+        import os
+        filename = os.path.basename(local_path)
+
+        file_metadata = {"name": filename, "parents": [cloud_folder]}
+
+        def _upload():
+            from googleapiclient.http import MediaFileUpload
+
+            media = MediaFileUpload(local_path, resumable=True)
+            return service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields="id, name, mimeType, size, modifiedTime, parents",
+            ).execute()
+
+        result = await asyncio.to_thread(_upload)
+
+        modified = None
+        if result.get("modifiedTime"):
+            modified = datetime.fromisoformat(
+                result["modifiedTime"].replace("Z", "+00:00")
+            )
+        return CloudFile(
+            file_id=result["id"],
+            name=result["name"],
+            path=f"{cloud_folder}/{result['name']}",
+            mime_type=result.get("mimeType", ""),
+            size=int(result.get("size", 0)),
+            modified_at=modified,
+        )
+
+    async def create_folder(self, name: str, parent_id: str = "root") -> str:
+        """Create a folder on Drive. Returns the new folder's ID."""
+        service = self._build_drive_service()
+
+        body = {
+            "name": name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id],
+        }
+
+        def _create():
+            return service.files().create(
+                body=body, fields="id, name"
+            ).execute()
+
+        result = await asyncio.to_thread(_create)
+        logger.info(f"Created Drive folder '{name}' (id={result['id']}) under {parent_id}")
+        return result["id"]
+
+    async def move_file(self, file_id: str, new_parent_id: str) -> Dict:
+        """Move a Drive file to a new parent folder."""
+        service = self._build_drive_service()
+
+        def _move():
+            # Get current parents so we can remove them
+            file_info = service.files().get(
+                fileId=file_id, fields="parents"
+            ).execute()
+            previous_parents = ",".join(file_info.get("parents", []))
+
+            return service.files().update(
+                fileId=file_id,
+                addParents=new_parent_id,
+                removeParents=previous_parents,
+                fields="id, name, parents",
+            ).execute()
+
+        result = await asyncio.to_thread(_move)
+        logger.info(f"Moved Drive file {file_id} → folder {new_parent_id}")
+        return result
+
+    async def get_file_metadata(self, file_id: str) -> CloudFile:
+        """Get metadata for a single Drive file."""
+        service = self._build_drive_service()
+
+        def _get():
+            return service.files().get(
+                fileId=file_id,
+                fields="id, name, mimeType, size, modifiedTime, parents",
+            ).execute()
+
+        result = await asyncio.to_thread(_get)
+
+        modified = None
+        if result.get("modifiedTime"):
+            modified = datetime.fromisoformat(
+                result["modifiedTime"].replace("Z", "+00:00")
+            )
+        parent = result.get("parents", ["root"])[0] if result.get("parents") else "root"
+        return CloudFile(
+            file_id=result["id"],
+            name=result["name"],
+            path=f"{parent}/{result['name']}",
+            mime_type=result.get("mimeType", ""),
+            size=int(result.get("size", 0)),
+            modified_at=modified,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +502,9 @@ class OneDriveProvider(CloudProviderBase):
     """Microsoft OneDrive adapter (OAuth 2.0)."""
 
     provider_name = "onedrive"
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @property
     def _client_id(self) -> str:
@@ -291,12 +575,25 @@ class OneDriveProvider(CloudProviderBase):
         logger.info("OneDriveProvider.list_files is not yet fully implemented")
         return []
 
+    async def list_folders(self, parent_id: str = "root") -> List[CloudFolder]:
+        logger.info("OneDriveProvider.list_folders is not yet fully implemented")
+        return []
+
     async def download_file(self, file_id: str, dest_path: str) -> str:
         logger.info("OneDriveProvider.download_file is not yet fully implemented")
         return dest_path
 
     async def upload_file(self, local_path: str, cloud_folder: str) -> CloudFile:
         raise NotImplementedError("Upload to OneDrive is not yet implemented")
+
+    async def create_folder(self, name: str, parent_id: str = "root") -> str:
+        raise NotImplementedError("create_folder for OneDrive is not yet implemented")
+
+    async def move_file(self, file_id: str, new_parent_id: str) -> Dict:
+        raise NotImplementedError("move_file for OneDrive is not yet implemented")
+
+    async def get_file_metadata(self, file_id: str) -> CloudFile:
+        raise NotImplementedError("get_file_metadata for OneDrive is not yet implemented")
 
 
 # ---------------------------------------------------------------------------

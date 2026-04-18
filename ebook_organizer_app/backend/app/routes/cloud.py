@@ -1,5 +1,6 @@
 """Cloud storage API endpoints"""
 
+import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -11,6 +12,26 @@ from app.services.cloud_provider_service import get_provider, list_providers
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_authenticated_adapter(provider: str, db: Session):
+    """Load stored credentials and return a ready-to-use provider adapter.
+
+    Raises HTTPException if the provider is unknown or not authenticated.
+    """
+    if provider not in list_providers():
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+    config = db.query(CloudConfig).filter(CloudConfig.provider == provider).first()
+    if not config or not config.is_authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail=f"{provider} is not authenticated. Connect it first.",
+        )
+
+    adapter = get_provider(provider)
+    adapter.set_credentials(json.loads(config.credentials_encrypted))
+    return adapter
 
 @router.get("/providers", response_model=List[CloudProviderStatus])
 async def get_cloud_providers(db: Session = Depends(get_db)):
@@ -126,7 +147,7 @@ async def disconnect_provider(provider: str, db: Session = Depends(get_db)):
 @router.get("/providers/{provider}/files")
 async def list_cloud_files(
     provider: str,
-    folder: str = Query(None, description="Folder path to list"),
+    folder: str = Query(None, description="Folder ID to list files from"),
     db: Session = Depends(get_db),
 ):
     """
@@ -134,16 +155,11 @@ async def list_cloud_files(
 
     Requires the provider to be authenticated first.
     """
-    config = db.query(CloudConfig).filter(CloudConfig.provider == provider).first()
-    if not config or not config.is_authenticated:
-        raise HTTPException(
-            status_code=401,
-            detail=f"{provider} is not authenticated. Connect it first.",
-        )
-
     try:
-        adapter = get_provider(provider)
+        adapter = _get_authenticated_adapter(provider, db)
         files = await adapter.list_files(folder_path=folder)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(f"Failed to list files from {provider}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -161,5 +177,43 @@ async def list_cloud_files(
                 "modified_at": f.modified_at.isoformat() if f.modified_at else None,
             }
             for f in files
+        ],
+    }
+
+
+@router.get("/providers/{provider}/folders")
+async def list_cloud_folders(
+    provider: str,
+    parent_id: str = Query("root", description="Parent folder ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    List subfolders in the user's cloud storage (for folder picker UI).
+
+    Requires the provider to be authenticated first.
+    """
+    try:
+        adapter = _get_authenticated_adapter(provider, db)
+        folders = await adapter.list_folders(parent_id=parent_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to list folders from {provider}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Build a human-readable path for the current location
+    current_path = "My Drive" if parent_id == "root" else parent_id
+
+    return {
+        "provider": provider,
+        "parent_id": parent_id,
+        "current_path": current_path,
+        "folders": [
+            {
+                "id": f.folder_id,
+                "name": f.name,
+                "parent_id": f.parent_id,
+            }
+            for f in folders
         ],
     }

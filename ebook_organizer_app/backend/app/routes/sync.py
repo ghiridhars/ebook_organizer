@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-async def perform_sync(provider: str, full_sync: bool, local_path: str, db: Session):
+async def perform_sync(provider: str, full_sync: bool, local_path: str, folder_id: str, db: Session):
     """
     Background task to perform cloud synchronization
     """
     from app.services.sync_service import sync_service
     
-    logger.debug(f"perform_sync called with provider={provider}, full_sync={full_sync}, local_path={local_path}")
+    logger.debug(f"perform_sync called with provider={provider}, full_sync={full_sync}, local_path={local_path}, folder_id={folder_id}")
 
     if provider == "local" or (provider == "all" and local_path):
         if local_path:
@@ -25,11 +25,13 @@ async def perform_sync(provider: str, full_sync: bool, local_path: str, db: Sess
              await sync_service.sync_local_folder(local_path, full_sync, db)
         else:
              logger.debug("local_path is empty, skipping local sync")
-    else:
-        logger.debug(f"Skipping sync. Conditions: provider={provider}, local_path={local_path}")
-    
-    # TODO: Add logic for other providers (Google Drive, OneDrive)
-    pass
+
+    if provider == "google_drive" or (provider == "all" and folder_id):
+        if folder_id:
+            logger.debug(f"Starting Google Drive sync for folder {folder_id}")
+            await sync_service.sync_google_drive(folder_id, full_sync, db)
+        else:
+            logger.debug("folder_id is empty, skipping Google Drive sync")
 
 @router.post("/trigger", response_model=SyncResponse)
 async def trigger_sync(
@@ -42,14 +44,15 @@ async def trigger_sync(
     """
     provider = sync_request.provider or "all"
     local_path = sync_request.local_path
+    folder_id = sync_request.folder_id
     
     # Initialize sync status synchronously to prevent race condition
-    if provider == "local" or (provider == "all" and local_path):
+    if provider in ("local", "all", "google_drive"):
         from app.services.sync_service import sync_service
         sync_service.set_initializing()
 
     # Add background task
-    background_tasks.add_task(perform_sync, provider, sync_request.full_sync, local_path, db)
+    background_tasks.add_task(perform_sync, provider, sync_request.full_sync, local_path, folder_id, db)
     
     return SyncResponse(
         status="initiated",

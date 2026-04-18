@@ -77,6 +77,7 @@ class SyncRequest(BaseModel):
     provider: Optional[str] = None  # If None, sync all enabled providers
     full_sync: bool = False  # If True, perform full sync instead of incremental
     local_path: Optional[str] = None  # Path to local library folder
+    folder_id: Optional[str] = None  # Cloud folder ID (e.g. Google Drive folder)
 
 class SyncResponse(BaseModel):
     """Schema for sync response"""
