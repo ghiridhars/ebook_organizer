@@ -7,6 +7,7 @@ import '../widgets/local_library_widget.dart';
 import '../widgets/local_ebook_list_item.dart';
 import '../widgets/active_filters_bar.dart';
 import '../widgets/skeleton_widgets.dart';
+import '../widgets/drive_folder_browser.dart';
 import '../services/api_service.dart';
 import 'classification_screen.dart';
 import 'reorganize_screen.dart';
@@ -32,32 +33,73 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
   Widget build(BuildContext context) {
     return Consumer<LocalLibraryProvider>(
       builder: (context, provider, _) {
-        // On web, show a different UI since directory scanning isn't supported
-        if (kIsWeb && !provider.hasLibraryPath && provider.filteredEbooks.isEmpty) {
-          return _WebSetupScreen(provider: provider);
-        }
-        
-        // Show setup screen if no library path (desktop only)
-        if (!kIsWeb && !provider.hasLibraryPath) {
-          return _SetupScreen(provider: provider);
-        }
-
         return Column(
           children: [
-            // Toolbar
-            _Toolbar(
-              provider: provider,
-              searchController: _searchController,
-            ),
-            // Active filters bar
-            const ActiveFiltersBar(),
-            // Content
+            // Source toggle (Local / Google Drive)
+            _SourceToggle(provider: provider),
+            // Conditional content based on source
             Expanded(
-              child: _buildContent(provider),
+              child: provider.isDriveSource
+                  ? _buildDriveContent(context, provider)
+                  : _buildLocalContent(context, provider),
             ),
           ],
         );
       },
+    );
+  }
+  
+  Widget _buildLocalContent(BuildContext context, LocalLibraryProvider provider) {
+    // On web, show a different UI since directory scanning isn't supported
+    if (kIsWeb && !provider.hasLibraryPath && provider.filteredEbooks.isEmpty) {
+      return _WebSetupScreen(provider: provider);
+    }
+    
+    // Show setup screen if no library path (desktop only)
+    if (!kIsWeb && !provider.hasLibraryPath) {
+      return _SetupScreen(provider: provider);
+    }
+
+    return Column(
+      children: [
+        // Toolbar
+        _Toolbar(
+          provider: provider,
+          searchController: _searchController,
+        ),
+        // Active filters bar
+        const ActiveFiltersBar(),
+        // Content
+        Expanded(
+          child: _buildContent(provider),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriveContent(BuildContext context, LocalLibraryProvider provider) {
+    // Not authenticated — show connect button
+    if (!provider.isDriveAuthenticated) {
+      return _DriveConnectScreen(provider: provider);
+    }
+
+    // No folder selected — show folder browser
+    if (!provider.hasDriveFolder) {
+      return DriveFolderBrowser(
+        onFolderSelected: (folderId, folderPath) {
+          provider.selectDriveFolder(folderId, folderPath);
+          provider.triggerDriveSync();
+        },
+      );
+    }
+
+    // Folder selected — show toolbar + books (synced from Drive)
+    return Column(
+      children: [
+        _DriveToolbar(provider: provider),
+        const ActiveFiltersBar(),
+        Expanded(child: _buildContent(provider)),
+      ],
     );
   }
   
@@ -294,6 +336,200 @@ class _FeaturesList extends StatelessWidget {
           ],
         ),
       )).toList(),
+    );
+  }
+}
+
+/// Source toggle bar: Local ↔ Google Drive
+class _SourceToggle extends StatelessWidget {
+  final LocalLibraryProvider provider;
+
+  const _SourceToggle({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SegmentedButton<LibrarySource>(
+              segments: const [
+                ButtonSegment(
+                  value: LibrarySource.local,
+                  label: Text('Local'),
+                  icon: Icon(Icons.folder),
+                ),
+                ButtonSegment(
+                  value: LibrarySource.googleDrive,
+                  label: Text('Google Drive'),
+                  icon: Icon(Icons.cloud),
+                ),
+              ],
+              selected: {provider.source},
+              onSelectionChanged: (selected) {
+                provider.setSource(selected.first);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Screen shown when Google Drive is not authenticated
+class _DriveConnectScreen extends StatelessWidget {
+  final LocalLibraryProvider provider;
+
+  const _DriveConnectScreen({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_off,
+                size: 64,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Connect Google Drive',
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Sign in with your Google account to browse\n'
+              'and sync ebooks from Google Drive.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  final api = ApiService();
+                  await api.authenticateProvider('google_drive');
+                  await provider.checkDriveAuth();
+                  if (context.mounted && provider.isDriveAuthenticated) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Google Drive connected!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to connect: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              icon: const Icon(Icons.login),
+              label: const Text('Sign in with Google'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Toolbar for Google Drive source view (replaces _Toolbar when in Drive mode)
+class _DriveToolbar extends StatelessWidget {
+  final LocalLibraryProvider provider;
+
+  const _DriveToolbar({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Drive folder path + actions
+          Row(
+            children: [
+              const Icon(Icons.cloud, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  provider.driveFolderPath ?? 'My Drive',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // Change folder
+              TextButton.icon(
+                onPressed: () => provider.clearDriveFolder(),
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('Change'),
+              ),
+              const SizedBox(width: 8),
+              // Sync button
+              IconButton.filled(
+                onPressed: provider.isDriveSyncing
+                    ? null
+                    : () => provider.triggerDriveSync(),
+                icon: provider.isDriveSyncing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync),
+                tooltip: 'Sync from Drive',
+              ),
+            ],
+          ),
+          if (provider.isDriveSyncing) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(),
+          ],
+        ],
+      ),
     );
   }
 }
