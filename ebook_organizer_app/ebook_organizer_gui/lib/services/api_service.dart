@@ -286,7 +286,7 @@ class ApiService {
 
   Future<void> authenticateProvider(String provider) async {
     final response = await _post(
-      '/cloud/providers/$provider/authenticate',
+      '/api/cloud/providers/$provider/authenticate',
     );
 
     if (response.statusCode != 200) {
@@ -300,7 +300,7 @@ class ApiService {
 
   Future<void> disconnectProvider(String provider) async {
     final response = await _post(
-      '/cloud/providers/$provider/disconnect',
+      '/api/cloud/providers/$provider/disconnect',
     );
 
     if (response.statusCode != 200) {
