@@ -3,15 +3,23 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/local_ebook.dart';
 import '../services/local_library_service.dart';
+import '../services/api_service.dart';
 import '../utils/platform_utils.dart';
 
 /// View mode for displaying ebooks
 enum ViewMode { grid, list }
 
+/// Source of ebooks to display
+enum LibrarySource { local, googleDrive }
+
 /// Provider for managing local ebook library state
 class LocalLibraryProvider with ChangeNotifier {
   final LocalLibraryService _service = LocalLibraryService.instance;
+  final ApiService _apiService = ApiService();
   static const String _viewModeKey = 'local_library_view_mode';
+  static const String _sourceKey = 'library_source';
+  static const String _driveFolderIdKey = 'drive_folder_id';
+  static const String _driveFolderPathKey = 'drive_folder_path';
 
   List<LocalEbook> _ebooks = [];
   LocalLibraryStats? _stats;
@@ -25,6 +33,15 @@ class LocalLibraryProvider with ChangeNotifier {
   
   // View mode
   ViewMode _viewMode = ViewMode.grid;
+
+  // Source toggle
+  LibrarySource _source = LibrarySource.local;
+  
+  // Google Drive state
+  bool _isDriveAuthenticated = false;
+  bool _isDriveSyncing = false;
+  String? _driveFolderId;
+  String? _driveFolderPath;
 
   // Filters
   String? _selectedCategory;
@@ -45,6 +62,16 @@ class LocalLibraryProvider with ChangeNotifier {
   int get scanProgress => _scanProgress;
   int get scanFound => _scanFound;
   bool get hasLibraryPath => _libraryPath != null && _libraryPath!.isNotEmpty;
+  
+  // Source & Drive getters
+  LibrarySource get source => _source;
+  bool get isLocalSource => _source == LibrarySource.local;
+  bool get isDriveSource => _source == LibrarySource.googleDrive;
+  bool get isDriveAuthenticated => _isDriveAuthenticated;
+  bool get isDriveSyncing => _isDriveSyncing;
+  String? get driveFolderId => _driveFolderId;
+  String? get driveFolderPath => _driveFolderPath;
+  bool get hasDriveFolder => _driveFolderId != null && _driveFolderId!.isNotEmpty;
 
   /// Returns true if file upload is supported (always true, works on all platforms)
   bool get supportsFileUpload => _service.supportsFileUpload;
@@ -87,6 +114,8 @@ class LocalLibraryProvider with ChangeNotifier {
 
     try {
       _libraryPath = await _service.getLibraryPath();
+      await loadViewMode();
+      await loadSourcePreferences();
       await loadStats();
       await loadEbooks();
     } catch (e) {
@@ -491,5 +520,128 @@ class LocalLibraryProvider with ChangeNotifier {
   void clearSearch() {
     _searchQuery = null;
     loadEbooks();
+  }
+
+  // ========================================================================
+  // Google Drive source methods
+  // ========================================================================
+
+  /// Switch between local and Google Drive source
+  Future<void> setSource(LibrarySource source) async {
+    if (_source == source) return;
+    _source = source;
+    _error = null;
+    notifyListeners();
+
+    // Persist the choice
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sourceKey, source == LibrarySource.googleDrive ? 'google_drive' : 'local');
+    } catch (_) {}
+
+    if (source == LibrarySource.googleDrive) {
+      await checkDriveAuth();
+    }
+  }
+
+  /// Load persisted source and Drive folder settings
+  Future<void> loadSourcePreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_sourceKey);
+      if (saved == 'google_drive') {
+        _source = LibrarySource.googleDrive;
+        _driveFolderId = prefs.getString(_driveFolderIdKey);
+        _driveFolderPath = prefs.getString(_driveFolderPathKey);
+        notifyListeners();
+        await checkDriveAuth();
+      }
+    } catch (_) {}
+  }
+
+  /// Check if Google Drive is authenticated
+  Future<void> checkDriveAuth() async {
+    try {
+      final providers = await _apiService.getCloudProviders();
+      final gdrive = providers.firstWhere(
+        (p) => p.provider == 'google_drive',
+        orElse: () => throw Exception('Google Drive not configured'),
+      );
+      _isDriveAuthenticated = gdrive.isAuthenticated;
+    } catch (e) {
+      _isDriveAuthenticated = false;
+      debugPrint('Drive auth check failed: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Select a Drive folder for syncing
+  Future<void> selectDriveFolder(String folderId, String folderPath) async {
+    _driveFolderId = folderId;
+    _driveFolderPath = folderPath;
+    _error = null;
+    notifyListeners();
+
+    // Persist
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_driveFolderIdKey, folderId);
+      await prefs.setString(_driveFolderPathKey, folderPath);
+    } catch (_) {}
+  }
+
+  /// Clear selected Drive folder
+  Future<void> clearDriveFolder() async {
+    _driveFolderId = null;
+    _driveFolderPath = null;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_driveFolderIdKey);
+      await prefs.remove(_driveFolderPathKey);
+    } catch (_) {}
+  }
+
+  /// Trigger Google Drive sync for the selected folder
+  Future<void> triggerDriveSync({bool fullSync = false}) async {
+    if (_driveFolderId == null) {
+      _error = 'No Drive folder selected';
+      notifyListeners();
+      return;
+    }
+
+    _isDriveSyncing = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _apiService.triggerSync(
+        provider: 'google_drive',
+        fullSync: fullSync,
+        folderId: _driveFolderId,
+      );
+
+      // Poll for completion
+      bool active = true;
+      while (active) {
+        await Future.delayed(const Duration(seconds: 1));
+        try {
+          final status = await _apiService.getSyncStatus();
+          active = status['is_active'] == true;
+        } catch (e) {
+          debugPrint('Error polling sync status: $e');
+        }
+      }
+
+      // Reload ebooks from backend (Drive-synced books appear in the DB)
+      await loadEbooks();
+      await loadStats();
+    } catch (e) {
+      _error = 'Drive sync failed: $e';
+    }
+
+    _isDriveSyncing = false;
+    notifyListeners();
   }
 }

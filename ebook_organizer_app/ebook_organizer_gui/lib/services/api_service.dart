@@ -246,6 +246,7 @@ class ApiService {
     String? provider,
     bool fullSync = false,
     String? localPath,
+    String? folderId,
   }) async {
     final response = await _post(
       '/api/sync/trigger',
@@ -253,6 +254,7 @@ class ApiService {
         if (provider != null) 'provider': provider,
         'full_sync': fullSync,
         if (localPath != null) 'local_path': localPath,
+        if (folderId != null) 'folder_id': folderId,
       },
     );
 
@@ -304,6 +306,44 @@ class ApiService {
     if (response.statusCode != 200) {
       throw ApiException(
         'Failed to disconnect provider',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// List folders in a cloud provider (for folder browser UI)
+  Future<List<Map<String, dynamic>>> listDriveFolders({String parentId = 'root'}) async {
+    final response = await _get(
+      '/api/cloud/providers/google_drive/folders?parent_id=${Uri.encodeComponent(parentId)}',
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['folders'] ?? []);
+    } else {
+      throw ApiException(
+        'Failed to list Drive folders',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      );
+    }
+  }
+
+  /// List ebook files in a cloud provider folder
+  Future<List<Map<String, dynamic>>> listDriveFiles({String? folderId}) async {
+    String path = '/api/cloud/providers/google_drive/files';
+    if (folderId != null) {
+      path += '?folder=${Uri.encodeComponent(folderId)}';
+    }
+    final response = await _get(path);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['files'] ?? []);
+    } else {
+      throw ApiException(
+        'Failed to list Drive files',
         statusCode: response.statusCode,
         responseBody: response.body,
       );
