@@ -20,6 +20,37 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class DriveApiError(Exception):
+    """Wrapper for Google Drive API errors with categorised status codes."""
+
+    def __init__(self, message: str, status_code: int = 0, retryable: bool = False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
+
+
+class DriveAuthError(DriveApiError):
+    """Token expired or permissions revoked (401 / 403)."""
+
+
+class DriveRateLimitError(DriveApiError):
+    """Too many requests (429)."""
+
+    def __init__(self, message: str = "Rate limited by Google Drive"):
+        super().__init__(message, status_code=429, retryable=True)
+
+
+class DriveNotFoundError(DriveApiError):
+    """Resource not found (404)."""
+
+    def __init__(self, message: str = "Drive resource not found"):
+        super().__init__(message, status_code=404, retryable=False)
+
+
+# ---------------------------------------------------------------------------
 # Data-transfer objects
 # ---------------------------------------------------------------------------
 
@@ -74,6 +105,7 @@ class CloudProviderBase(ABC):
 
     def __init__(self) -> None:
         self._token_data: Optional[Dict] = None
+        self._token_refresh_callback = None  # Set by route layer to persist refreshed tokens
 
     def set_credentials(self, token_data: Dict) -> None:
         """Store OAuth token data for subsequent API calls."""
@@ -208,6 +240,98 @@ class GoogleDriveProvider(CloudProviderBase):
 
         return build("drive", "v3", credentials=creds)
 
+    @staticmethod
+    def _translate_http_error(exc) -> DriveApiError:
+        """Translate a googleapiclient HttpError into a typed DriveApiError."""
+        from googleapiclient.errors import HttpError
+
+        if not isinstance(exc, HttpError):
+            return DriveApiError(str(exc))
+
+        status = exc.resp.status if exc.resp else 0
+        msg = str(exc)
+
+        if status in (401, 403):
+            return DriveAuthError(msg, status_code=status)
+        if status == 429:
+            return DriveRateLimitError(msg)
+        if status == 404:
+            return DriveNotFoundError(msg)
+        if status in (500, 502, 503):
+            return DriveApiError(msg, status_code=status, retryable=True)
+
+        return DriveApiError(msg, status_code=status)
+
+    async def _attempt_token_refresh(self) -> bool:
+        """Try to refresh the access token. Returns True on success."""
+        rt = (self._token_data or {}).get("refresh_token")
+        if not rt:
+            logger.warning("No refresh token available for Google Drive")
+            return False
+
+        try:
+            new_tokens = await self.refresh_token(rt)
+            # Merge new tokens into existing token data
+            merged = {**(self._token_data or {}), **new_tokens}
+            self._token_data = merged
+
+            # Persist via callback if available
+            if self._token_refresh_callback:
+                self._token_refresh_callback(new_tokens)
+
+            logger.info("Successfully refreshed Google Drive access token")
+            return True
+        except Exception as exc:
+            logger.error(f"Token refresh failed: {exc}")
+            return False
+
+    async def _drive_api_call(self, fn):
+        """Execute a Drive API call with retry, backoff, and auth refresh.
+
+        *fn* is a callable (sync) that performs the actual API request.
+        Retries on 429 / 500 / 503 with exponential backoff (max 3 attempts).
+        On 401 / 403, attempts a single token refresh before re-raising.
+        """
+        from googleapiclient.errors import HttpError
+        from tenacity import (
+            AsyncRetrying,
+            stop_after_attempt,
+            wait_exponential,
+            retry_if_exception,
+        )
+
+        def _is_retryable(exc):
+            return isinstance(exc, DriveApiError) and exc.retryable
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=30),
+                retry=retry_if_exception(_is_retryable),
+                reraise=True,
+            ):
+                with attempt:
+                    try:
+                        return await asyncio.to_thread(fn)
+                    except HttpError as exc:
+                        translated = self._translate_http_error(exc)
+
+                        # On auth errors, try one token refresh
+                        if isinstance(translated, DriveAuthError):
+                            refreshed = await self._attempt_token_refresh()
+                            if refreshed:
+                                raise DriveApiError(
+                                    str(exc), status_code=translated.status_code,
+                                    retryable=True,
+                                ) from exc
+                            raise translated from exc
+
+                        raise translated from exc
+        except DriveApiError:
+            raise
+        except Exception as exc:
+            raise DriveApiError(f"Unexpected error: {exc}") from exc
+
     # -- public API (auth) -----------------------------------------------
 
     def get_auth_url(self) -> str:
@@ -269,13 +393,7 @@ class GoogleDriveProvider(CloudProviderBase):
         folder_path: Optional[str] = None,
         file_types: Optional[List[str]] = None,
     ) -> List[CloudFile]:
-        """List ebook files in a Drive folder, with pagination.
-
-        Args:
-            folder_path: Drive folder ID (defaults to "root").
-            file_types: Optional list of extensions (e.g. [".epub", ".pdf"]).
-                        Defaults to all supported ebook extensions.
-        """
+        """List ebook files in a Drive folder, with pagination."""
         service = self._build_drive_service()
         folder_id = folder_path or "root"
 
@@ -300,7 +418,7 @@ class GoogleDriveProvider(CloudProviderBase):
                     orderBy="name",
                 ).execute()
 
-            results = await asyncio.to_thread(_list)
+            results = await self._drive_api_call(_list)
 
             for f in results.get("files", []):
                 modified = None
@@ -348,7 +466,7 @@ class GoogleDriveProvider(CloudProviderBase):
                     orderBy="name",
                 ).execute()
 
-            results = await asyncio.to_thread(_list)
+            results = await self._drive_api_call(_list)
 
             for f in results.get("files", []):
                 p_id = f.get("parents", [parent_id])[0] if f.get("parents") else parent_id
@@ -371,7 +489,6 @@ class GoogleDriveProvider(CloudProviderBase):
 
         def _download():
             from googleapiclient.http import MediaIoBaseDownload
-            import io
 
             request = service.files().get_media(fileId=file_id)
             with open(dest_path, "wb") as fh:
@@ -381,7 +498,7 @@ class GoogleDriveProvider(CloudProviderBase):
                     _status, done = downloader.next_chunk()
             return dest_path
 
-        result = await asyncio.to_thread(_download)
+        result = await self._drive_api_call(_download)
         logger.info(f"Downloaded Drive file {file_id} → {dest_path}")
         return result
 
@@ -404,7 +521,7 @@ class GoogleDriveProvider(CloudProviderBase):
                 fields="id, name, mimeType, size, modifiedTime, parents",
             ).execute()
 
-        result = await asyncio.to_thread(_upload)
+        result = await self._drive_api_call(_upload)
 
         modified = None
         if result.get("modifiedTime"):
@@ -435,7 +552,7 @@ class GoogleDriveProvider(CloudProviderBase):
                 body=body, fields="id, name"
             ).execute()
 
-        result = await asyncio.to_thread(_create)
+        result = await self._drive_api_call(_create)
         logger.info(f"Created Drive folder '{name}' (id={result['id']}) under {parent_id}")
         return result["id"]
 
@@ -444,7 +561,6 @@ class GoogleDriveProvider(CloudProviderBase):
         service = self._build_drive_service()
 
         def _move():
-            # Get current parents so we can remove them
             file_info = service.files().get(
                 fileId=file_id, fields="parents"
             ).execute()
@@ -457,7 +573,7 @@ class GoogleDriveProvider(CloudProviderBase):
                 fields="id, name, parents",
             ).execute()
 
-        result = await asyncio.to_thread(_move)
+        result = await self._drive_api_call(_move)
         logger.info(f"Moved Drive file {file_id} → folder {new_parent_id}")
         return result
 
@@ -471,7 +587,7 @@ class GoogleDriveProvider(CloudProviderBase):
                 fields="id, name, mimeType, size, modifiedTime, parents",
             ).execute()
 
-        result = await asyncio.to_thread(_get)
+        result = await self._drive_api_call(_get)
 
         modified = None
         if result.get("modifiedTime"):

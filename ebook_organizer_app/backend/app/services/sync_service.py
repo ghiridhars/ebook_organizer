@@ -29,6 +29,7 @@ class SyncService:
             "books_processed": 0,
             "books_added": 0,
             "books_updated": 0,
+            "books_skipped": 0,
             "books_failed": 0
         }
 
@@ -44,6 +45,7 @@ class SyncService:
             "books_processed": 0,
             "books_added": 0,
             "books_updated": 0,
+            "books_skipped": 0,
             "books_failed": 0
         }
 
@@ -229,6 +231,18 @@ class SyncService:
             adapter = get_provider("google_drive")
             adapter.set_credentials(json.loads(config.credentials_encrypted))
 
+            # Set up token refresh callback to persist refreshed tokens
+            def _on_refresh(new_tokens):
+                merged = {**json.loads(config.credentials_encrypted), **new_tokens}
+                config.credentials_encrypted = json.dumps(merged)
+                adapter.set_credentials(merged)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+            adapter._token_refresh_callback = _on_refresh
+
             # List ebook files in the selected folder
             self._update_status(stage="listing files on Drive")
             cloud_files = await adapter.list_files(folder_path=folder_id)
@@ -247,8 +261,15 @@ class SyncService:
                     ).first()
 
                     if existing and not full_sync:
-                        self._status["books_processed"] += 1
-                        continue
+                        # Incremental: skip if Drive file hasn't changed
+                        if (
+                            existing.cloud_modified_time
+                            and cf.modified_at
+                            and cf.modified_at <= existing.cloud_modified_time
+                        ):
+                            self._status["books_skipped"] += 1
+                            self._status["books_processed"] += 1
+                            continue
 
                     # Download to temp for metadata extraction
                     ext = os.path.splitext(cf.name)[1].lower()
@@ -285,7 +306,7 @@ class SyncService:
                             os.unlink(tmp_path)
 
                     if existing:
-                        # Full sync: update existing record
+                        # Full sync or file changed: update existing record
                         if metadata:
                             existing.title = metadata.title or existing.title
                             existing.author = metadata.author or existing.author
@@ -299,6 +320,7 @@ class SyncService:
                             existing.sub_genre = sub_genre
                         existing.file_size = cf.size
                         existing.last_synced = datetime.now()
+                        existing.cloud_modified_time = cf.modified_at
                         existing.sync_status = "synced"
                         self._status["books_updated"] += 1
                     else:
@@ -315,6 +337,7 @@ class SyncService:
                             is_synced=True,
                             sync_status="synced",
                             last_synced=datetime.now(),
+                            cloud_modified_time=cf.modified_at,
                         )
                         if metadata:
                             ebook_kwargs.update(
@@ -332,7 +355,22 @@ class SyncService:
                     self._status["books_processed"] += 1
 
                 except Exception as file_err:
-                    logger.error(f"Failed to process Drive file {cf.name}: {file_err}")
+                    from app.services.cloud_provider_service import (
+                        DriveAuthError, DriveRateLimitError, DriveNotFoundError,
+                    )
+                    if isinstance(file_err, DriveAuthError):
+                        logger.error(
+                            f"Auth error processing {cf.name} (HTTP {file_err.status_code}): {file_err}"
+                        )
+                    elif isinstance(file_err, DriveRateLimitError):
+                        logger.warning(f"Rate limited on {cf.name}, skipping")
+                    elif isinstance(file_err, DriveNotFoundError):
+                        logger.warning(f"Drive file {cf.name} not found (maybe deleted)")
+                    else:
+                        logger.error(
+                            f"Failed to process Drive file {cf.name}: {file_err}",
+                            exc_info=True,
+                        )
                     self._status["books_failed"] += 1
                     self._status["books_processed"] += 1
 

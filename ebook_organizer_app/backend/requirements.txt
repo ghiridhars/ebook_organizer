@@ -34,5 +34,8 @@ python-dotenv==1.0.0
 # HTTP Client (OAuth token exchange)
 httpx>=0.27.0
 
+# Retry with exponential backoff (Drive API rate limiting)
+tenacity>=8.2.0
+
 # CORS
 fastapi-cors==0.0.6

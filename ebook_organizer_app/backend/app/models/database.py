@@ -38,6 +38,7 @@ class Ebook(Base):
     
     # Sync State
     last_synced = Column(DateTime, default=datetime.utcnow)
+    cloud_modified_time = Column(DateTime, nullable=True)  # modifiedTime from Drive API
     is_synced = Column(Boolean, default=True)
     sync_status = Column(String(50), default="synced")  # synced, pending, error
     
