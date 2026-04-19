@@ -473,3 +473,127 @@ async def execute_drive_reorganization(
         db.commit()
 
     return result
+
+
+# ---- Generic cloud reorganization (OneDrive, etc.) ----
+
+def generate_cloud_reorganize_plan(
+    db: Session,
+    cloud_provider: str,
+    destination_folder_id: str,
+    include_unclassified: bool = False,
+) -> ReorganizePlan:
+    """Generate a preview plan for any cloud provider reorganization."""
+    plan = ReorganizePlan(
+        destination=f"{cloud_provider}:{destination_folder_id}",
+        operation="move",
+    )
+
+    ebooks = db.query(Ebook).filter(
+        Ebook.cloud_provider == cloud_provider
+    ).all()
+
+    for ebook in ebooks:
+        if not ebook.cloud_file_id:
+            continue
+
+        classified = _is_classified(ebook)
+        if not classified and not include_unclassified:
+            continue
+
+        path_parts = _compute_drive_folder_path(ebook)
+        if not path_parts:
+            continue
+
+        target_display = "/".join(path_parts) + "/" + (ebook.title or ebook.cloud_file_id)
+
+        move = PlannedMove(
+            ebook_id=ebook.id,
+            source_path=ebook.cloud_file_path or ebook.cloud_file_id,
+            target_path=target_display,
+            title=ebook.title or os.path.basename(ebook.cloud_file_path or ""),
+            author=_get_author_folder(ebook),
+            category=ebook.category or "",
+            sub_genre=ebook.sub_genre or "",
+        )
+        plan.planned_moves.append(move)
+
+        if classified:
+            plan.classified_files += 1
+        else:
+            plan.unclassified_files += 1
+
+    plan.total_files = len(plan.planned_moves)
+    return plan
+
+
+async def execute_cloud_reorganization(
+    db: Session,
+    cloud_provider: str,
+    destination_folder_id: str,
+    include_unclassified: bool = False,
+) -> ReorganizeResult:
+    """Move cloud ebooks into Category/SubGenre/Author folders.
+
+    Works with any cloud provider (OneDrive, etc.) that implements
+    CloudProviderBase.  Reuses the Drive folder-path helpers.
+    """
+    from app.services.cloud_provider_service import get_provider
+
+    result = ReorganizeResult()
+
+    config = db.query(CloudConfig).filter(
+        CloudConfig.provider == cloud_provider
+    ).first()
+    if not config or not config.is_authenticated:
+        result.errors.append(f"{cloud_provider} is not authenticated.")
+        return result
+
+    adapter = get_provider(cloud_provider)
+    adapter.set_credentials(json.loads(config.credentials_encrypted))
+
+    folder_cache: Dict[str, str] = {}
+
+    ebooks = db.query(Ebook).filter(
+        Ebook.cloud_provider == cloud_provider
+    ).all()
+
+    for ebook in ebooks:
+        try:
+            if not ebook.cloud_file_id:
+                result.skipped += 1
+                continue
+
+            classified = _is_classified(ebook)
+            if not classified and not include_unclassified:
+                result.skipped += 1
+                continue
+
+            path_parts = _compute_drive_folder_path(ebook)
+            if not path_parts:
+                result.skipped += 1
+                continue
+
+            target_folder_id = await _ensure_drive_folder_path(
+                adapter, destination_folder_id, path_parts, folder_cache
+            )
+
+            old_path = ebook.cloud_file_path or ebook.cloud_file_id
+            await adapter.move_file(ebook.cloud_file_id, target_folder_id)
+
+            new_path = "/".join(path_parts) + "/" + os.path.basename(old_path)
+            ebook.cloud_file_path = new_path
+
+            result.path_mappings[old_path] = new_path
+            result.succeeded += 1
+            result.total_processed += 1
+
+        except Exception as e:
+            result.failed += 1
+            result.total_processed += 1
+            result.errors.append(f"{ebook.title}: {str(e)}")
+
+    if result.succeeded > 0:
+        db.commit()
+
+    return result

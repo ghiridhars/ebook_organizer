@@ -21,6 +21,8 @@ from app.services.file_organizer_service import (
     execute_reorganization,
     generate_drive_reorganize_plan,
     execute_drive_reorganization,
+    generate_cloud_reorganize_plan,
+    execute_cloud_reorganization,
 )
 from app.models import EbookResponse
 
@@ -325,6 +327,14 @@ async def reorganize_preview(
                 destination_folder_id=folder_id,
                 include_unclassified=request.include_unclassified,
             )
+        elif request.destination.startswith("onedrive:"):
+            folder_id = request.destination.split(":", 1)[1]
+            plan = generate_cloud_reorganize_plan(
+                db,
+                cloud_provider="onedrive",
+                destination_folder_id=folder_id,
+                include_unclassified=request.include_unclassified,
+            )
         else:
             plan = generate_reorganize_plan(
                 db,
@@ -376,6 +386,14 @@ async def reorganize(
             folder_id = request.destination.split(":", 1)[1]
             result = await execute_drive_reorganization(
                 db,
+                destination_folder_id=folder_id,
+                include_unclassified=request.include_unclassified,
+            )
+        elif request.destination.startswith("onedrive:"):
+            folder_id = request.destination.split(":", 1)[1]
+            result = await execute_cloud_reorganization(
+                db,
+                cloud_provider="onedrive",
                 destination_folder_id=folder_id,
                 include_unclassified=request.include_unclassified,
             )

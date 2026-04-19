@@ -614,11 +614,12 @@ class GoogleDriveProvider(CloudProviderBase):
 
 _MS_AUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
 _MS_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-_MS_SCOPES = "Files.Read Files.Read.All offline_access"
+_MS_GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+_MS_SCOPES = "Files.Read Files.Read.All Files.ReadWrite.All offline_access"
 
 
 class OneDriveProvider(CloudProviderBase):
-    """Microsoft OneDrive adapter (OAuth 2.0)."""
+    """Microsoft OneDrive adapter (OAuth 2.0 + MS Graph API)."""
 
     provider_name = "onedrive"
 
@@ -636,6 +637,136 @@ class OneDriveProvider(CloudProviderBase):
     @property
     def _redirect_uri(self) -> str:
         return "http://localhost:8000/api/cloud/onedrive/callback"
+
+    @property
+    def _access_token(self) -> str:
+        if not self._token_data:
+            raise RuntimeError(
+                "No OAuth tokens configured. "
+                "Call set_credentials() with stored token data first."
+            )
+        return self._token_data.get("access_token", "")
+
+    def _auth_headers(self) -> Dict[str, str]:
+        return {"Authorization": f"Bearer {self._access_token}"}
+
+    @staticmethod
+    def _translate_graph_error(status: int, body: str) -> DriveApiError:
+        """Map MS Graph HTTP status to a typed DriveApiError."""
+        if status in (401, 403):
+            return DriveAuthError(body, status_code=status)
+        if status == 429:
+            return DriveRateLimitError(f"Rate limited by OneDrive: {body}")
+        if status == 404:
+            return DriveNotFoundError(f"OneDrive resource not found: {body}")
+        if status in (500, 502, 503):
+            return DriveApiError(body, status_code=status, retryable=True)
+        return DriveApiError(body, status_code=status)
+
+    async def _attempt_token_refresh(self) -> bool:
+        """Try to refresh the access token. Returns True on success."""
+        rt = (self._token_data or {}).get("refresh_token")
+        if not rt:
+            logger.warning("No refresh token available for OneDrive")
+            return False
+
+        try:
+            new_tokens = await self.refresh_token(rt)
+            merged = {**(self._token_data or {}), **new_tokens}
+            self._token_data = merged
+
+            if self._token_refresh_callback:
+                self._token_refresh_callback(new_tokens)
+
+            logger.info("Successfully refreshed OneDrive access token")
+            return True
+        except Exception as exc:
+            logger.error(f"OneDrive token refresh failed: {exc}")
+            return False
+
+    async def _graph_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: Optional[Dict] = None,
+        raw_content: Optional[bytes] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+        stream: bool = False,
+        timeout: int = 60,
+    ):
+        """Execute an MS Graph API request with retry and auth refresh.
+
+        Returns the parsed JSON response, or raw bytes when *stream=True*.
+        Pass *raw_content* + *extra_headers* for binary uploads.
+        """
+        import httpx
+        from tenacity import (
+            AsyncRetrying,
+            stop_after_attempt,
+            wait_exponential,
+            retry_if_exception,
+        )
+
+        def _is_retryable(exc):
+            return isinstance(exc, DriveApiError) and exc.retryable
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=30),
+                retry=retry_if_exception(_is_retryable),
+                reraise=True,
+            ):
+                with attempt:
+                    headers = {**self._auth_headers(), **(extra_headers or {})}
+                    kwargs: Dict = {"headers": headers}
+                    if raw_content is not None:
+                        kwargs["content"] = raw_content
+                    elif json_body is not None:
+                        kwargs["json"] = json_body
+
+                    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+                        resp = await client.request(method, url, **kwargs)
+
+                    if resp.status_code >= 400:
+                        translated = self._translate_graph_error(
+                            resp.status_code, resp.text
+                        )
+                        if isinstance(translated, DriveAuthError):
+                            refreshed = await self._attempt_token_refresh()
+                            if refreshed:
+                                raise DriveApiError(
+                                    resp.text,
+                                    status_code=resp.status_code,
+                                    retryable=True,
+                                )
+                            raise translated
+                        raise translated
+
+                    if stream:
+                        return resp.content
+                    if resp.status_code == 204 or not resp.text:
+                        return {}
+                    return resp.json()
+        except DriveApiError:
+            raise
+        except Exception as exc:
+            raise DriveApiError(f"Unexpected OneDrive error: {exc}") from exc
+
+    def _item_url(self, item_id: str) -> str:
+        """Build MS Graph URL for a drive item."""
+        if item_id == "root":
+            return f"{_MS_GRAPH_BASE}/me/drive/root"
+        return f"{_MS_GRAPH_BASE}/me/drive/items/{item_id}"
+
+    @staticmethod
+    def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    # -- public API (auth) -----------------------------------------------
 
     def get_auth_url(self) -> str:
         if not self._client_id:
@@ -665,6 +796,7 @@ class OneDriveProvider(CloudProviderBase):
                     "client_secret": self._client_secret,
                     "redirect_uri": self._redirect_uri,
                     "grant_type": "authorization_code",
+                    "scope": _MS_SCOPES,
                 },
             )
             resp.raise_for_status()
@@ -681,38 +813,165 @@ class OneDriveProvider(CloudProviderBase):
                     "client_id": self._client_id,
                     "client_secret": self._client_secret,
                     "grant_type": "refresh_token",
+                    "scope": _MS_SCOPES,
                 },
             )
             resp.raise_for_status()
             return resp.json()
+
+    # -- public API (OneDrive operations) --------------------------------
 
     async def list_files(
         self,
         folder_path: Optional[str] = None,
         file_types: Optional[List[str]] = None,
     ) -> List[CloudFile]:
-        logger.info("OneDriveProvider.list_files is not yet fully implemented")
-        return []
+        """List ebook files in a OneDrive folder, following pagination."""
+        folder_id = folder_path or "root"
+        extensions = set(file_types or _EBOOK_EXTENSIONS)
+
+        url = f"{self._item_url(folder_id)}/children"
+        files: List[CloudFile] = []
+
+        while url:
+            data = await self._graph_request("GET", url)
+
+            for item in data.get("value", []):
+                # Skip folders
+                if "folder" in item:
+                    continue
+                name = item.get("name", "")
+                ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                if ext not in extensions:
+                    continue
+
+                files.append(CloudFile(
+                    file_id=item["id"],
+                    name=name,
+                    path=f"{folder_id}/{name}",
+                    mime_type=item.get("file", {}).get("mimeType", ""),
+                    size=item.get("size", 0),
+                    modified_at=self._parse_datetime(
+                        item.get("lastModifiedDateTime")
+                    ),
+                ))
+
+            url = data.get("@odata.nextLink")
+
+        logger.info(f"Listed {len(files)} ebook(s) in OneDrive folder {folder_id}")
+        return files
 
     async def list_folders(self, parent_id: str = "root") -> List[CloudFolder]:
-        logger.info("OneDriveProvider.list_folders is not yet fully implemented")
-        return []
+        """List subfolders of the given parent folder on OneDrive."""
+        url = f"{self._item_url(parent_id)}/children?$filter=folder ne null&$orderby=name"
+        folders: List[CloudFolder] = []
+
+        while url:
+            data = await self._graph_request("GET", url)
+
+            for item in data.get("value", []):
+                if "folder" not in item:
+                    continue
+                folders.append(CloudFolder(
+                    folder_id=item["id"],
+                    name=item.get("name", ""),
+                    parent_id=parent_id,
+                ))
+
+            url = data.get("@odata.nextLink")
+
+        logger.info(f"Listed {len(folders)} subfolder(s) under OneDrive {parent_id}")
+        return folders
 
     async def download_file(self, file_id: str, dest_path: str) -> str:
-        logger.info("OneDriveProvider.download_file is not yet fully implemented")
+        """Download a OneDrive file to *dest_path*."""
+        url = f"{self._item_url(file_id)}/content"
+        content = await self._graph_request("GET", url, stream=True)
+
+        with open(dest_path, "wb") as fh:
+            fh.write(content)
+
+        logger.info(f"Downloaded OneDrive file {file_id} → {dest_path}")
         return dest_path
 
     async def upload_file(self, local_path: str, cloud_folder: str) -> CloudFile:
-        raise NotImplementedError("Upload to OneDrive is not yet implemented")
+        """Upload a local file to a OneDrive folder (simple upload ≤ 4 MB)."""
+        import os
+
+        filename = os.path.basename(local_path)
+        url = f"{self._item_url(cloud_folder)}:/{filename}:/content"
+
+        with open(local_path, "rb") as fh:
+            file_bytes = fh.read()
+
+        item = await self._graph_request(
+            "PUT",
+            url,
+            raw_content=file_bytes,
+            extra_headers={"Content-Type": "application/octet-stream"},
+            timeout=120,
+        )
+
+        return CloudFile(
+            file_id=item["id"],
+            name=item.get("name", filename),
+            path=f"{cloud_folder}/{item.get('name', filename)}",
+            mime_type=item.get("file", {}).get("mimeType", ""),
+            size=item.get("size", 0),
+            modified_at=self._parse_datetime(item.get("lastModifiedDateTime")),
+        )
 
     async def create_folder(self, name: str, parent_id: str = "root") -> str:
-        raise NotImplementedError("create_folder for OneDrive is not yet implemented")
+        """Create a folder on OneDrive. Returns the new folder's ID."""
+        url = f"{self._item_url(parent_id)}/children"
+        body = {
+            "name": name,
+            "folder": {},
+            "@microsoft.graph.conflictBehavior": "fail",
+        }
+
+        try:
+            result = await self._graph_request("POST", url, json_body=body)
+        except DriveApiError as e:
+            # 409 Conflict means folder already exists — look it up
+            if e.status_code == 409:
+                existing = await self.list_folders(parent_id)
+                for f in existing:
+                    if f.name == name:
+                        return f.folder_id
+            raise
+
+        folder_id = result["id"]
+        logger.info(
+            f"Created OneDrive folder '{name}' (id={folder_id}) under {parent_id}"
+        )
+        return folder_id
 
     async def move_file(self, file_id: str, new_parent_id: str) -> Dict:
-        raise NotImplementedError("move_file for OneDrive is not yet implemented")
+        """Move a OneDrive file to a new parent folder."""
+        url = self._item_url(file_id)
+        body = {"parentReference": {"id": new_parent_id}}
+
+        result = await self._graph_request("PATCH", url, json_body=body)
+        logger.info(f"Moved OneDrive file {file_id} → folder {new_parent_id}")
+        return result
 
     async def get_file_metadata(self, file_id: str) -> CloudFile:
-        raise NotImplementedError("get_file_metadata for OneDrive is not yet implemented")
+        """Get metadata for a single OneDrive file."""
+        url = self._item_url(file_id)
+        result = await self._graph_request("GET", url)
+
+        parent_id = result.get("parentReference", {}).get("id", "root")
+        return CloudFile(
+            file_id=result["id"],
+            name=result.get("name", ""),
+            path=f"{parent_id}/{result.get('name', '')}",
+            mime_type=result.get("file", {}).get("mimeType", ""),
+            size=result.get("size", 0),
+            modified_at=self._parse_datetime(
+                result.get("lastModifiedDateTime")
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
