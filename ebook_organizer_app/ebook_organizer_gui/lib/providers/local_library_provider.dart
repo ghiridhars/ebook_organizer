@@ -10,7 +10,7 @@ import '../utils/platform_utils.dart';
 enum ViewMode { grid, list }
 
 /// Source of ebooks to display
-enum LibrarySource { local, googleDrive }
+enum LibrarySource { local, googleDrive, oneDrive }
 
 /// Provider for managing local ebook library state
 class LocalLibraryProvider with ChangeNotifier {
@@ -20,6 +20,8 @@ class LocalLibraryProvider with ChangeNotifier {
   static const String _sourceKey = 'library_source';
   static const String _driveFolderIdKey = 'drive_folder_id';
   static const String _driveFolderPathKey = 'drive_folder_path';
+  static const String _onedriveFolderIdKey = 'onedrive_folder_id';
+  static const String _onedriveFolderPathKey = 'onedrive_folder_path';
 
   List<LocalEbook> _ebooks = [];
   LocalLibraryStats? _stats;
@@ -42,6 +44,12 @@ class LocalLibraryProvider with ChangeNotifier {
   bool _isDriveSyncing = false;
   String? _driveFolderId;
   String? _driveFolderPath;
+
+  // OneDrive state
+  bool _isOnedriveAuthenticated = false;
+  bool _isOnedriveSyncing = false;
+  String? _onedriveFolderId;
+  String? _onedriveFolderPath;
 
   // Filters
   String? _selectedCategory;
@@ -67,11 +75,19 @@ class LocalLibraryProvider with ChangeNotifier {
   LibrarySource get source => _source;
   bool get isLocalSource => _source == LibrarySource.local;
   bool get isDriveSource => _source == LibrarySource.googleDrive;
+  bool get isOnedriveSource => _source == LibrarySource.oneDrive;
+  bool get isCloudSource => isDriveSource || isOnedriveSource;
+  String get activeCloudProvider => isDriveSource ? 'google_drive' : 'onedrive';
   bool get isDriveAuthenticated => _isDriveAuthenticated;
   bool get isDriveSyncing => _isDriveSyncing;
   String? get driveFolderId => _driveFolderId;
   String? get driveFolderPath => _driveFolderPath;
   bool get hasDriveFolder => _driveFolderId != null && _driveFolderId!.isNotEmpty;
+  bool get isOnedriveAuthenticated => _isOnedriveAuthenticated;
+  bool get isOnedriveSyncing => _isOnedriveSyncing;
+  String? get onedriveFolderId => _onedriveFolderId;
+  String? get onedriveFolderPath => _onedriveFolderPath;
+  bool get hasOnedriveFolder => _onedriveFolderId != null && _onedriveFolderId!.isNotEmpty;
 
   /// Returns true if file upload is supported (always true, works on all platforms)
   bool get supportsFileUpload => _service.supportsFileUpload;
@@ -526,7 +542,7 @@ class LocalLibraryProvider with ChangeNotifier {
   // Google Drive source methods
   // ========================================================================
 
-  /// Switch between local and Google Drive source
+  /// Switch between local, Google Drive, and OneDrive source
   Future<void> setSource(LibrarySource source) async {
     if (_source == source) return;
     _source = source;
@@ -536,15 +552,22 @@ class LocalLibraryProvider with ChangeNotifier {
     // Persist the choice
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_sourceKey, source == LibrarySource.googleDrive ? 'google_drive' : 'local');
+      final key = source == LibrarySource.googleDrive
+          ? 'google_drive'
+          : source == LibrarySource.oneDrive
+              ? 'onedrive'
+              : 'local';
+      await prefs.setString(_sourceKey, key);
     } catch (_) {}
 
     if (source == LibrarySource.googleDrive) {
       await checkDriveAuth();
+    } else if (source == LibrarySource.oneDrive) {
+      await checkOnedriveAuth();
     }
   }
 
-  /// Load persisted source and Drive folder settings
+  /// Load persisted source and Drive/OneDrive folder settings
   Future<void> loadSourcePreferences() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -555,6 +578,12 @@ class LocalLibraryProvider with ChangeNotifier {
         _driveFolderPath = prefs.getString(_driveFolderPathKey);
         notifyListeners();
         await checkDriveAuth();
+      } else if (saved == 'onedrive') {
+        _source = LibrarySource.oneDrive;
+        _onedriveFolderId = prefs.getString(_onedriveFolderIdKey);
+        _onedriveFolderPath = prefs.getString(_onedriveFolderPathKey);
+        notifyListeners();
+        await checkOnedriveAuth();
       }
     } catch (_) {}
   }
@@ -642,6 +671,94 @@ class LocalLibraryProvider with ChangeNotifier {
     }
 
     _isDriveSyncing = false;
+    notifyListeners();
+  }
+
+  // ========================================================================
+  // OneDrive source methods
+  // ========================================================================
+
+  /// Check if OneDrive is authenticated
+  Future<void> checkOnedriveAuth() async {
+    try {
+      final providers = await _apiService.getCloudProviders();
+      final od = providers.firstWhere(
+        (p) => p.provider == 'onedrive',
+        orElse: () => throw Exception('OneDrive not configured'),
+      );
+      _isOnedriveAuthenticated = od.isAuthenticated;
+    } catch (e) {
+      _isOnedriveAuthenticated = false;
+      debugPrint('OneDrive auth check failed: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Select a OneDrive folder for syncing
+  Future<void> selectOnedriveFolder(String folderId, String folderPath) async {
+    _onedriveFolderId = folderId;
+    _onedriveFolderPath = folderPath;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_onedriveFolderIdKey, folderId);
+      await prefs.setString(_onedriveFolderPathKey, folderPath);
+    } catch (_) {}
+  }
+
+  /// Clear selected OneDrive folder
+  Future<void> clearOnedriveFolder() async {
+    _onedriveFolderId = null;
+    _onedriveFolderPath = null;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_onedriveFolderIdKey);
+      await prefs.remove(_onedriveFolderPathKey);
+    } catch (_) {}
+  }
+
+  /// Trigger OneDrive sync for the selected folder
+  Future<void> triggerOnedriveSync({bool fullSync = false}) async {
+    if (_onedriveFolderId == null) {
+      _error = 'No OneDrive folder selected';
+      notifyListeners();
+      return;
+    }
+
+    _isOnedriveSyncing = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _apiService.triggerSync(
+        provider: 'onedrive',
+        fullSync: fullSync,
+        folderId: _onedriveFolderId,
+      );
+
+      // Poll for completion
+      bool active = true;
+      while (active) {
+        await Future.delayed(const Duration(seconds: 1));
+        try {
+          final status = await _apiService.getSyncStatus();
+          active = status['is_active'] == true;
+        } catch (e) {
+          debugPrint('Error polling sync status: $e');
+        }
+      }
+
+      await loadEbooks();
+      await loadStats();
+    } catch (e) {
+      _error = 'OneDrive sync failed: $e';
+    }
+
+    _isOnedriveSyncing = false;
     notifyListeners();
   }
 }

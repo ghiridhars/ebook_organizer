@@ -332,8 +332,18 @@ class ApiService {
 
   /// List folders in a cloud provider (for folder browser UI)
   Future<List<Map<String, dynamic>>> listDriveFolders({String parentId = 'root'}) async {
+    return listCloudFolders('google_drive', parentId: parentId);
+  }
+
+  /// List ebook files in a cloud provider folder
+  Future<List<Map<String, dynamic>>> listDriveFiles({String? folderId}) async {
+    return listCloudFiles('google_drive', folderId: folderId);
+  }
+
+  /// Generic: list folders for any cloud provider
+  Future<List<Map<String, dynamic>>> listCloudFolders(String provider, {String parentId = 'root'}) async {
     final response = await _get(
-      '/api/cloud/providers/google_drive/folders?parent_id=${Uri.encodeComponent(parentId)}',
+      '/api/cloud/providers/$provider/folders?parent_id=${Uri.encodeComponent(parentId)}',
     );
 
     if (response.statusCode == 200) {
@@ -341,16 +351,16 @@ class ApiService {
       return List<Map<String, dynamic>>.from(data['folders'] ?? []);
     } else {
       throw ApiException(
-        'Failed to list Drive folders',
+        'Failed to list $provider folders',
         statusCode: response.statusCode,
         responseBody: response.body,
       );
     }
   }
 
-  /// List ebook files in a cloud provider folder
-  Future<List<Map<String, dynamic>>> listDriveFiles({String? folderId}) async {
-    String path = '/api/cloud/providers/google_drive/files';
+  /// Generic: list ebook files for any cloud provider
+  Future<List<Map<String, dynamic>>> listCloudFiles(String provider, {String? folderId}) async {
+    String path = '/api/cloud/providers/$provider/files';
     if (folderId != null) {
       path += '?folder=${Uri.encodeComponent(folderId)}';
     }
@@ -361,7 +371,7 @@ class ApiService {
       return List<Map<String, dynamic>>.from(data['files'] ?? []);
     } else {
       throw ApiException(
-        'Failed to list Drive files',
+        'Failed to list $provider files',
         statusCode: response.statusCode,
         responseBody: response.body,
       );

@@ -9,26 +9,35 @@ class _BreadcrumbEntry {
   const _BreadcrumbEntry({required this.id, required this.name});
 }
 
-/// Widget for browsing Google Drive folders and selecting one for sync
-class DriveFolderBrowser extends StatefulWidget {
+/// Widget for browsing cloud folders (Google Drive / OneDrive) and selecting one for sync
+class CloudFolderBrowser extends StatefulWidget {
+  /// Cloud provider identifier ('google_drive' or 'onedrive')
+  final String provider;
   final void Function(String folderId, String folderPath) onFolderSelected;
 
-  const DriveFolderBrowser({super.key, required this.onFolderSelected});
+  const CloudFolderBrowser({
+    super.key,
+    required this.provider,
+    required this.onFolderSelected,
+  });
 
   @override
-  State<DriveFolderBrowser> createState() => _DriveFolderBrowserState();
+  State<CloudFolderBrowser> createState() => _CloudFolderBrowserState();
 }
 
-class _DriveFolderBrowserState extends State<DriveFolderBrowser> {
+class _CloudFolderBrowserState extends State<CloudFolderBrowser> {
   final ApiService _apiService = ApiService();
 
   List<Map<String, dynamic>> _folders = [];
   bool _isLoading = false;
   String? _error;
 
+  String get _rootLabel =>
+      widget.provider == 'onedrive' ? 'OneDrive' : 'My Drive';
+
   // Navigation breadcrumb path
-  List<_BreadcrumbEntry> _breadcrumbs = [
-    const _BreadcrumbEntry(id: 'root', name: 'My Drive'),
+  late List<_BreadcrumbEntry> _breadcrumbs = [
+    _BreadcrumbEntry(id: 'root', name: _rootLabel),
   ];
 
   String get _currentFolderId => _breadcrumbs.last.id;
@@ -49,7 +58,7 @@ class _DriveFolderBrowserState extends State<DriveFolderBrowser> {
     });
 
     try {
-      _folders = await _apiService.listDriveFolders(parentId: _currentFolderId);
+      _folders = await _apiService.listCloudFolders(widget.provider, parentId: _currentFolderId);
     } catch (e) {
       _error = 'Failed to load folders: $e';
     }
@@ -96,7 +105,7 @@ class _DriveFolderBrowserState extends State<DriveFolderBrowser> {
                   Icon(Icons.folder_open, color: theme.colorScheme.primary),
                   const SizedBox(width: 12),
                   Text(
-                    'Select a Drive Folder',
+                    'Select a ${_rootLabel} Folder',
                     style: theme.textTheme.titleLarge,
                   ),
                 ],
@@ -234,7 +243,12 @@ class _DriveFolderBrowserState extends State<DriveFolderBrowser> {
         final id = folder['id'] as String? ?? '';
 
         return ListTile(
-          leading: const Icon(Icons.folder, color: Color(0xFFFBBC04)),
+          leading: Icon(
+            Icons.folder,
+            color: widget.provider == 'onedrive'
+                ? const Color(0xFF0078D4) // OneDrive blue
+                : const Color(0xFFFBBC04), // Google Drive yellow
+          ),
           title: Text(name),
           trailing: const Icon(Icons.chevron_right),
           shape: RoundedRectangleBorder(
@@ -243,6 +257,21 @@ class _DriveFolderBrowserState extends State<DriveFolderBrowser> {
           onTap: () => _navigateToFolder(id, name),
         );
       },
+    );
+  }
+}
+
+/// Backward-compatible alias
+class DriveFolderBrowser extends StatelessWidget {
+  final void Function(String folderId, String folderPath) onFolderSelected;
+
+  const DriveFolderBrowser({super.key, required this.onFolderSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return CloudFolderBrowser(
+      provider: 'google_drive',
+      onFolderSelected: onFolderSelected,
     );
   }
 }

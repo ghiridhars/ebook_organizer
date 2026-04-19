@@ -216,6 +216,7 @@ class SyncService:
             CloudConfig.provider == "google_drive"
         ).first()
         if not config or not config.is_authenticated:
+            self._update_status(is_active=False, status="failed", stage="not authenticated")
             return SyncResponse(
                 status="failed",
                 provider="google_drive",
@@ -426,6 +427,233 @@ class SyncService:
             return SyncResponse(
                 status="failed",
                 provider="google_drive",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                duration_seconds=duration,
+                error_message=str(e),
+            )
+
+    # ----- OneDrive sync -------------------------------------------------
+
+    async def sync_onedrive(
+        self, folder_id: str, full_sync: bool, db: Session
+    ) -> SyncResponse:
+        """Sync ebooks from a OneDrive folder into the database.
+
+        Mirrors the Google Drive sync flow: list → download → metadata → classify → DB.
+        """
+        import json
+        from app.services.cloud_provider_service import get_provider
+
+        self._reset_status()
+        self._update_status(stage="connecting to OneDrive")
+        start_time = datetime.now()
+
+        config = db.query(CloudConfig).filter(
+            CloudConfig.provider == "onedrive"
+        ).first()
+        if not config or not config.is_authenticated:
+            self._update_status(is_active=False, status="failed", stage="not authenticated")
+            return SyncResponse(
+                status="failed",
+                provider="onedrive",
+                books_processed=0,
+                books_added=0,
+                books_updated=0,
+                books_failed=0,
+                duration_seconds=0.0,
+                error_message="OneDrive is not authenticated. Connect it first.",
+            )
+
+        try:
+            adapter = get_provider("onedrive")
+            adapter.set_credentials(json.loads(config.credentials_encrypted))
+
+            def _on_refresh(new_tokens):
+                merged = {**json.loads(config.credentials_encrypted), **new_tokens}
+                config.credentials_encrypted = json.dumps(merged)
+                adapter.set_credentials(merged)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+            adapter._token_refresh_callback = _on_refresh
+
+            self._update_status(stage="listing files on OneDrive")
+            cloud_files = await adapter.list_files(folder_path=folder_id)
+            logger.info(f"Found {len(cloud_files)} ebook(s) in OneDrive folder {folder_id}")
+
+            for cf in cloud_files:
+                self._update_status(
+                    stage="processing file",
+                    current_file=cf.name,
+                )
+
+                try:
+                    existing = db.query(Ebook).filter(
+                        Ebook.cloud_file_id == cf.file_id
+                    ).first()
+
+                    if existing and not full_sync:
+                        if (
+                            existing.cloud_modified_time
+                            and cf.modified_at
+                            and cf.modified_at <= existing.cloud_modified_time
+                        ):
+                            self._status["books_skipped"] += 1
+                            self._status["books_processed"] += 1
+                            continue
+
+                    ext = os.path.splitext(cf.name)[1].lower()
+                    self._update_status(stage="downloading for metadata")
+
+                    with tempfile.NamedTemporaryFile(
+                        suffix=ext, delete=False
+                    ) as tmp:
+                        tmp_path = tmp.name
+
+                    try:
+                        await adapter.download_file(cf.file_id, tmp_path)
+
+                        self._update_status(stage="extracting metadata")
+                        metadata = await metadata_service.read_metadata(tmp_path)
+
+                        category = None
+                        sub_genre = None
+                        try:
+                            from app.services.metadata_classifier import classify_book
+                            result = classify_book(tmp_path, metadata)
+                            if result:
+                                category = result.get("category")
+                                sub_genre = result.get("sub_genre")
+                        except Exception as cls_err:
+                            logger.warning(
+                                f"Classification failed for {cf.name}: {cls_err}"
+                            )
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+
+                    if existing:
+                        if metadata:
+                            existing.title = metadata.title or existing.title
+                            existing.author = metadata.author or existing.author
+                            existing.description = metadata.description or existing.description
+                            existing.publisher = metadata.publisher or existing.publisher
+                            existing.language = metadata.language or existing.language
+                            existing.published_date = metadata.date or existing.published_date
+                        if category:
+                            existing.category = category
+                        if sub_genre:
+                            existing.sub_genre = sub_genre
+                        existing.file_size = cf.size
+                        existing.last_synced = datetime.now()
+                        existing.cloud_modified_time = cf.modified_at
+                        existing.sync_status = "synced"
+                        self._status["books_updated"] += 1
+                    else:
+                        ebook_kwargs = dict(
+                            title=cf.name,
+                            file_format=ext.lstrip("."),
+                            file_size=cf.size,
+                            cloud_provider="onedrive",
+                            cloud_file_id=cf.file_id,
+                            cloud_file_path=cf.path,
+                            category=category,
+                            sub_genre=sub_genre,
+                            is_synced=True,
+                            sync_status="synced",
+                            last_synced=datetime.now(),
+                            cloud_modified_time=cf.modified_at,
+                        )
+                        if metadata:
+                            ebook_kwargs.update(
+                                title=metadata.title or cf.name,
+                                author=metadata.author or "Unknown",
+                                description=metadata.description,
+                                publisher=metadata.publisher,
+                                language=metadata.language,
+                                published_date=metadata.date,
+                            )
+
+                        db.add(Ebook(**ebook_kwargs))
+                        self._status["books_added"] += 1
+
+                    self._status["books_processed"] += 1
+
+                except Exception as file_err:
+                    from app.services.cloud_provider_service import (
+                        DriveAuthError, DriveRateLimitError, DriveNotFoundError,
+                    )
+                    if isinstance(file_err, DriveAuthError):
+                        logger.error(
+                            f"Auth error processing {cf.name} (HTTP {file_err.status_code}): {file_err}"
+                        )
+                    elif isinstance(file_err, DriveRateLimitError):
+                        logger.warning(f"Rate limited on {cf.name}, skipping")
+                    elif isinstance(file_err, DriveNotFoundError):
+                        logger.warning(f"OneDrive file {cf.name} not found (maybe deleted)")
+                    else:
+                        logger.error(
+                            f"Failed to process OneDrive file {cf.name}: {file_err}",
+                            exc_info=True,
+                        )
+                    self._status["books_failed"] += 1
+                    self._status["books_processed"] += 1
+
+            db.commit()
+            duration = (datetime.now() - start_time).total_seconds()
+
+            sync_log = SyncLog(
+                cloud_provider="onedrive",
+                operation="full_sync" if full_sync else "incremental",
+                status="success",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                completed_at=datetime.now(),
+                duration_seconds=duration,
+            )
+            db.add(sync_log)
+            db.commit()
+
+            config.last_sync = datetime.now()
+            config.folder_path = folder_id
+            db.commit()
+
+            self._update_status(
+                is_active=False,
+                status="completed",
+                stage=None,
+                current_file=None,
+            )
+
+            return SyncResponse(
+                status="completed",
+                provider="onedrive",
+                books_processed=self._status["books_processed"],
+                books_added=self._status["books_added"],
+                books_updated=self._status["books_updated"],
+                books_failed=self._status["books_failed"],
+                duration_seconds=duration,
+            )
+
+        except Exception as e:
+            logger.error(f"OneDrive sync failed: {e}")
+            db.rollback()
+            duration = (datetime.now() - start_time).total_seconds()
+            self._update_status(
+                is_active=False,
+                status="failed",
+                stage=str(e),
+            )
+            return SyncResponse(
+                status="failed",
+                provider="onedrive",
                 books_processed=self._status["books_processed"],
                 books_added=self._status["books_added"],
                 books_updated=self._status["books_updated"],

@@ -36,13 +36,15 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
       builder: (context, provider, _) {
         return Column(
           children: [
-            // Source toggle (Local / Google Drive)
+            // Source toggle (Local / Google Drive / OneDrive)
             _SourceToggle(provider: provider),
             // Conditional content based on source
             Expanded(
               child: provider.isDriveSource
                   ? _buildDriveContent(context, provider)
-                  : _buildLocalContent(context, provider),
+                  : provider.isOnedriveSource
+                      ? _buildOnedriveContent(context, provider)
+                      : _buildLocalContent(context, provider),
             ),
           ],
         );
@@ -98,6 +100,33 @@ class _LocalLibraryViewState extends State<LocalLibraryView> {
     return Column(
       children: [
         _DriveToolbar(provider: provider),
+        const ActiveFiltersBar(),
+        Expanded(child: _buildContent(provider)),
+      ],
+    );
+  }
+
+  Widget _buildOnedriveContent(BuildContext context, LocalLibraryProvider provider) {
+    // Not authenticated — show connect button
+    if (!provider.isOnedriveAuthenticated) {
+      return _CloudConnectScreen(provider: provider, cloudProvider: 'onedrive');
+    }
+
+    // No folder selected — show folder browser
+    if (!provider.hasOnedriveFolder) {
+      return CloudFolderBrowser(
+        provider: 'onedrive',
+        onFolderSelected: (folderId, folderPath) {
+          provider.selectOnedriveFolder(folderId, folderPath);
+          provider.triggerOnedriveSync();
+        },
+      );
+    }
+
+    // Folder selected — show toolbar + books
+    return Column(
+      children: [
+        _CloudToolbar(provider: provider, cloudProvider: 'onedrive'),
         const ActiveFiltersBar(),
         Expanded(child: _buildContent(provider)),
       ],
@@ -341,7 +370,7 @@ class _FeaturesList extends StatelessWidget {
   }
 }
 
-/// Source toggle bar: Local ↔ Google Drive
+/// Source toggle bar: Local ↔ Google Drive ↔ OneDrive
 class _SourceToggle extends StatelessWidget {
   final LocalLibraryProvider provider;
 
@@ -373,6 +402,11 @@ class _SourceToggle extends StatelessWidget {
                   value: LibrarySource.googleDrive,
                   label: Text('Google Drive'),
                   icon: Icon(Icons.cloud),
+                ),
+                ButtonSegment(
+                  value: LibrarySource.oneDrive,
+                  label: Text('OneDrive'),
+                  icon: Icon(Icons.cloud_outlined),
                 ),
               ],
               selected: {provider.source},
@@ -582,6 +616,239 @@ class _DriveToolbar extends StatelessWidget {
             ],
           ),
           if (provider.isDriveSyncing) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Generic connect screen for any cloud provider (OneDrive, etc.)
+class _CloudConnectScreen extends StatelessWidget {
+  final LocalLibraryProvider provider;
+  final String cloudProvider;
+
+  const _CloudConnectScreen({required this.provider, required this.cloudProvider});
+
+  String get _displayName => cloudProvider == 'onedrive' ? 'OneDrive' : 'Google Drive';
+  String get _signInLabel => cloudProvider == 'onedrive' ? 'Sign in with Microsoft' : 'Sign in with Google';
+  String get _description => cloudProvider == 'onedrive'
+      ? 'Sign in with your Microsoft account to browse\nand sync ebooks from OneDrive.'
+      : 'Sign in with your Google account to browse\nand sync ebooks from Google Drive.';
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_off,
+                size: 64,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Connect $_displayName',
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _description,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  final api = ApiService();
+                  final authUrl = await api.authenticateProvider(cloudProvider);
+
+                  final uri = Uri.parse(authUrl);
+                  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+                    throw Exception('Could not open browser');
+                  }
+
+                  if (!context.mounted) return;
+
+                  final code = await showDialog<String>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (ctx) {
+                      final controller = TextEditingController();
+                      return AlertDialog(
+                        title: const Text('Paste Authorization Code'),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'After signing in with ${cloudProvider == 'onedrive' ? 'Microsoft' : 'Google'}, '
+                              'copy the authorization code from the browser and paste it below.',
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: controller,
+                              decoration: const InputDecoration(
+                                labelText: 'Authorization code',
+                                border: OutlineInputBorder(),
+                              ),
+                              autofocus: true,
+                              onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(null),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+                            child: const Text('Connect'),
+                          ),
+                        ],
+                      );
+                    },
+                  );
+
+                  if (code == null || code.isEmpty) return;
+
+                  await api.exchangeOAuthCode(cloudProvider, code);
+                  if (cloudProvider == 'onedrive') {
+                    await provider.checkOnedriveAuth();
+                  } else {
+                    await provider.checkDriveAuth();
+                  }
+
+                  if (context.mounted) {
+                    final isAuth = cloudProvider == 'onedrive'
+                        ? provider.isOnedriveAuthenticated
+                        : provider.isDriveAuthenticated;
+                    if (isAuth) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('$_displayName connected!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to connect: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              icon: const Icon(Icons.login),
+              label: Text(_signInLabel),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Generic toolbar for any cloud source (OneDrive, etc.)
+class _CloudToolbar extends StatelessWidget {
+  final LocalLibraryProvider provider;
+  final String cloudProvider;
+
+  const _CloudToolbar({required this.provider, required this.cloudProvider});
+
+  String get _displayName => cloudProvider == 'onedrive' ? 'OneDrive' : 'My Drive';
+  String? get _folderPath => cloudProvider == 'onedrive' ? provider.onedriveFolderPath : provider.driveFolderPath;
+  bool get _isSyncing => cloudProvider == 'onedrive' ? provider.isOnedriveSyncing : provider.isDriveSyncing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(
+                cloudProvider == 'onedrive' ? Icons.cloud_outlined : Icons.cloud,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _folderPath ?? _displayName,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  if (cloudProvider == 'onedrive') {
+                    provider.clearOnedriveFolder();
+                  } else {
+                    provider.clearDriveFolder();
+                  }
+                },
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('Change'),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: _isSyncing
+                    ? null
+                    : () {
+                        if (cloudProvider == 'onedrive') {
+                          provider.triggerOnedriveSync();
+                        } else {
+                          provider.triggerDriveSync();
+                        }
+                      },
+                icon: _isSyncing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync),
+                tooltip: 'Sync from $_displayName',
+              ),
+            ],
+          ),
+          if (_isSyncing) ...[
             const SizedBox(height: 8),
             const LinearProgressIndicator(),
           ],
